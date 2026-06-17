@@ -1,0 +1,29 @@
+# Secrets — NEVER commit these
+.streamlit/secrets.toml
+.streamlit/secrets.toml.bak*
+.env
+*.json.bak
+
+# Local submission backups
+submissions/*.json
+!submissions/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
