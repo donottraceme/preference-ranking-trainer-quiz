@@ -190,19 +190,141 @@ def _reset_form() -> None:
 # Admin viewer (?admin=1)
 # -----------------------------------------------------------------------------
 
+def _admin_authorized() -> bool:
+    """Return True only if no password is configured, or the user supplied it.
+
+    Configure by adding to .streamlit/secrets.toml (or Streamlit Cloud secrets):
+        [admin]
+        password = "your-pick-here"
+    If no [admin] block exists, the admin view is open (useful locally).
+    """
+    try:
+        configured = st.secrets.get("admin", {}).get("password")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        configured = None
+    if not configured:
+        return True
+
+    if st.session_state.get("admin_ok"):
+        return True
+
+    st.title("Admin login")
+    st.text_input("Admin password", type="password", key="_admin_pw_entry")
+    if st.button("Sign in"):
+        if st.session_state.get("_admin_pw_entry") == configured:
+            st.session_state.admin_ok = True
+            st.rerun()
+        st.error("Wrong password.")
+    return False
+
+
 def render_admin() -> None:
-    st.title("Admin — Local Submissions")
+    if not _admin_authorized():
+        return
+
+    st.title("Admin — Local Submissions on this container")
+    st.caption(
+        "⚠️ Streamlit Cloud's filesystem is **ephemeral** — local JSON files "
+        "are wiped on every reboot/redeploy/idle-restart. Treat Google Sheets "
+        "as your canonical store; these local files exist only as a fallback "
+        "for submissions where the webhook itself failed."
+    )
+
     rows = list_local_submissions()
     if not rows:
-        st.info("No local submissions yet. They live in `trainer_app/submissions/`.")
+        st.info(
+            "No local JSON files on this container. Either nothing's been "
+            "submitted since the last restart, or every submission since "
+            "then was also written to Google Sheets (which is the normal case)."
+        )
         return
-    st.success(f"{len(rows)} submission(s) on disk.")
-    for row in rows:
+
+    st.success(f"{len(rows)} local file(s) on disk.")
+
+    # ---- bulk-download controls ----
+    import csv
+    import io
+    import zipfile
+
+    # CSV: same column layout as the Google Sheet for easy comparison.
+    csv_buf = io.StringIO()
+    writer = csv.writer(csv_buf)
+    writer.writerow([
+        "submission_id", "timestamp_utc", "trainer_name", "trainer_email", "task_id",
+        "A_following", "A_concision", "A_concision_dir", "A_truthful", "A_satisfaction",
+        "B_following", "B_concision", "B_concision_dir", "B_truthful", "B_satisfaction",
+        "C_following", "C_concision", "C_concision_dir", "C_truthful", "C_satisfaction",
+        "pair_B_vs_A", "pair_C_vs_A", "pair_C_vs_B",
+        "overall_comment", "elapsed_seconds",
+    ])
+    for r in rows:
+        ra = r.get("ratings", {}).get("A", {}) or {}
+        rb = r.get("ratings", {}).get("B", {}) or {}
+        rc = r.get("ratings", {}).get("C", {}) or {}
+        pp = r.get("pairs", {}) or {}
+        writer.writerow([
+            r.get("submission_id", ""), r.get("timestamp_utc", ""),
+            r.get("trainer_name", ""), r.get("trainer_email", ""), r.get("task_id", ""),
+            ra.get("following", ""), ra.get("concision", ""), ra.get("concision_dir", ""),
+            ra.get("truthful", ""), ra.get("satisfaction", ""),
+            rb.get("following", ""), rb.get("concision", ""), rb.get("concision_dir", ""),
+            rb.get("truthful", ""), rb.get("satisfaction", ""),
+            rc.get("following", ""), rc.get("concision", ""), rc.get("concision_dir", ""),
+            rc.get("truthful", ""), rc.get("satisfaction", ""),
+            pp.get("B_vs_A", ""), pp.get("C_vs_A", ""), pp.get("C_vs_B", ""),
+            r.get("overall_comment", ""), r.get("elapsed_seconds", ""),
+        ])
+    csv_bytes = csv_buf.getvalue().encode("utf-8")
+
+    # Zip: all raw JSONs in one archive.
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        import json as _json
+        for r in rows:
+            sid = r.get("submission_id", "unknown")
+            zf.writestr(f"{sid}.json",
+                        _json.dumps(r, indent=2, ensure_ascii=False))
+    zip_bytes = zip_buf.getvalue()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "Download all as CSV",
+            data=csv_bytes,
+            file_name="submissions.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with c2:
+        st.download_button(
+            "Download all as ZIP (raw JSONs)",
+            data=zip_bytes,
+            file_name="submissions.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+
+    # ---- tabular preview ----
+    st.markdown("### Preview")
+    table_rows = []
+    for r in rows:
+        table_rows.append({
+            "timestamp_utc": r.get("timestamp_utc", ""),
+            "trainer_name": r.get("trainer_name", ""),
+            "trainer_email": r.get("trainer_email", ""),
+            "id": (r.get("submission_id", "") or "")[:8],
+            "comment_len": len((r.get("overall_comment", "") or "")),
+        })
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+    # ---- per-row drilldown ----
+    st.markdown("### Per-submission details")
+    for r in rows:
         with st.expander(
-            f"{row.get('timestamp_utc', '?')} — {row.get('trainer_name', '?')} — "
-            f"{row.get('submission_id', '?')[:8]}"
+            f"{r.get('timestamp_utc', '?')} — {r.get('trainer_name', '?')} — "
+            f"{r.get('submission_id', '?')[:8]}"
         ):
-            st.json(row)
+            st.json(r)
 
 
 # -----------------------------------------------------------------------------
