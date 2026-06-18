@@ -808,7 +808,7 @@ def render_landing() -> None:
         st.markdown(
             '<div class="mode-card">'
             '<h3>Part 1 · Knowledge Quiz</h3>'
-            '<p>33 multiple-choice and true/false items distilled from the '
+            '<p>29 multiple-choice and true/false items distilled from the '
             'project guide. Click an option to lock it in and reveal the '
             'correct answer + rule.</p>'
             '<ul>'
