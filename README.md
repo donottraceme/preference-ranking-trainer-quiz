@@ -1,22 +1,42 @@
 # Preference Ranking — Trainer Practice App
 
-A Streamlit clone of the in-tool grading UI (see screenshots in `../test/`)
-that lets trainers practice on a single canonical task — the PDF's
-**`np.random.choice` without replacement** example — and submits their
-ratings to a shared Google Sheet (or local files for testing).
+A Streamlit app with **two independent modes** that calibrate annotators on
+the Preference Ranking project guide:
+
+1. **Knowledge Quiz** — 33 multiple-choice / true-false items distilled from
+   `Project_data/Preference_Ranking_QA_Quiz_v3.md`. Each answer freezes the
+   moment it's clicked and the correct answer + rule are revealed inline.
+   The quiz is **locked to one attempt per email** (server-enforced). There
+   is no pass/fail threshold; the raw score lands in the sheet for later
+   analysis.
+2. **Grading Exercise** — the in-tool grading UI clone (see screenshots in
+   `../test/`): rate three candidate responses on four dimensions + holistic
+   Satisfaction, run all three pairwise comparisons, and write one
+   comparative comment. Mirrors the production grading screen.
+
+Both flows submit to a shared Google Sheet (or local JSON files when
+nothing is configured). On launch trainers land on a small picker that
+collects name + email once and routes to whichever mode they choose; the
+URL params `?mode=quiz` and `?mode=exercise` deep-link straight to either
+flow on subsequent visits.
 
 ## What's in here
 
 ```
 trainer_app/
-├── app.py                      # Streamlit UI (response panels + pair panels + comment)
-├── tasks.py                    # The task and 3 candidate responses (A, B, C)
-├── storage.py                  # Google Sheets + local JSON storage
+├── app.py                      # Streamlit router (landing + admin + mode dispatch)
+├── quiz.py                     # Knowledge quiz UI + per-email completion gate
+├── quiz_data.py                # The 33 quiz items, structured as Python data
+├── tasks.py                    # The exercise task and 3 candidate responses
+├── storage.py                  # Google Sheets / webhook / local JSON storage
+├── apps_script.gs              # Apps Script handler for both POST and GET
+├── setup_sheets.py             # Provisions BOTH the Submissions + QuizSubmissions tabs
+├── test_webhook.py             # Round-trip smoke test for exercise + quiz lock
 ├── requirements.txt
 ├── .streamlit/
 │   ├── config.toml             # Theme + server config
 │   └── secrets.toml.example    # Template for Sheets credentials
-├── submissions/                # Local fallback for submissions (gitignored)
+├── submissions/                # Local fallback (gitignored). quiz_*.json = quiz backups.
 └── README.md
 ```
 
@@ -182,17 +202,47 @@ Free alternative to Streamlit Cloud, same idea:
 
 ## How submissions look in the sheet
 
-One row per submission:
+Two tabs are written to:
+
+**`Submissions`** (one row per grading-exercise attempt):
 
 | submission_id | timestamp_utc | trainer_name | trainer_email | task_id | A_following | A_concision | A_concision_dir | A_truthful | A_satisfaction | B_… | C_… | pair_B_vs_A | pair_C_vs_A | pair_C_vs_B | overall_comment | elapsed_seconds |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
+**`QuizSubmissions`** (one row per finished quiz):
+
+| submission_id | timestamp_utc | trainer_name | trainer_email | total_score | max_score | elapsed_seconds | quiz_version | answers_json |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+`answers_json` is a single JSON column packed with two dicts:
+`{"answers": {"A1": "c", "A2": "false", …}, "correctness": {"A1": true, …}}`.
+Saves the sheet from having 33 narrow columns; project leads can parse it
+when they want to inspect per-question detail.
+
 ## Reviewing submissions
 
 - **Sheets backend:** open the sheet — sort by `trainer_name` or
-  filter by `timestamp_utc`.
+  filter by `timestamp_utc`. The two tabs are independent.
 - **Local backend:** `streamlit run app.py` then visit `/?admin=1`,
-  or just read the JSON files in `submissions/`.
+  or just read the JSON files in `submissions/`. Quiz backups live in
+  `submissions/quiz_*.json`; exercise backups have no prefix.
+
+## Quiz lock & how to clear it
+
+The quiz is locked to one attempt per email. When a trainer opens the
+quiz, the app issues a `GET <webhook>?action=quiz_status&email=…`; if
+the Apps Script handler reports a completed row, the trainer sees their
+prior score and cannot retake.
+
+To wipe a trainer's lock (e.g., they need a genuine retake), delete
+their row from the `QuizSubmissions` tab. Their next visit will start a
+fresh attempt.
+
+**Known mid-quiz refresh edge case:** between page-1 and "Finish quiz",
+nothing has been written to the server yet. A user who refreshes mid-quiz
+starts from scratch. They lose every locked answer (and the running
+score), so the cheat path is self-punishing rather than a free lookup.
+The lock activates the moment they click "Finish quiz".
 
 ## Adding more tasks later
 

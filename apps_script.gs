@@ -4,17 +4,25 @@
  * Paste this file into your Google Sheet's Apps Script editor and deploy
  * it as a Web App (see trainer_app/README.md → "No-GCP setup").
  *
- * It accepts POST requests with a JSON body matching the payload built
- * by storage._build_payload() in the Streamlit app, and appends one row
- * to the active spreadsheet's "Submissions" sheet.
+ * It handles two payload "types":
+ *   - "exercise" (default when missing): appends one row to the
+ *     "Submissions" sheet — same behavior as before.
+ *   - "quiz":  appends one row to the "QuizSubmissions" sheet and
+ *     enables a GET-based lookup so the Streamlit app can ask
+ *     "has email X already finished the quiz?" before letting a
+ *     trainer retake it.
  *
  * On first deploy Apps Script will ask you to authorize:
  *   - "See, edit, create, and delete your spreadsheets in Google Drive"
  * That permission is scoped only to YOUR sheets (because the script is
  * bound to this one sheet).
+ *
+ * When you edit this file you MUST redeploy:
+ *   Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy.
  */
 
 const SHEET_NAME = "Submissions";
+const QUIZ_SHEET_NAME = "QuizSubmissions";
 
 const HEADER = [
   "submission_id",
@@ -32,6 +40,18 @@ const HEADER = [
   "elapsed_seconds",
 ];
 
+const QUIZ_HEADER = [
+  "submission_id",
+  "timestamp_utc",
+  "trainer_name",
+  "trainer_email",
+  "total_score",
+  "max_score",
+  "elapsed_seconds",
+  "quiz_version",
+  "answers_json",
+];
+
 /**
  * Entry point. Apps Script automatically calls this on every POST to the
  * deployed web-app URL. The Streamlit app's storage layer hits this URL.
@@ -39,42 +59,99 @@ const HEADER = [
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
-    const sheet = _getOrCreateSheet();
-    sheet.appendRow(_flatten(payload));
-    return ContentService
-      .createTextOutput(JSON.stringify({ ok: true }))
-      .setMimeType(ContentService.MimeType.JSON);
+    if (payload && payload.type === "quiz") {
+      const sheet = _getOrCreateSheet(QUIZ_SHEET_NAME, QUIZ_HEADER);
+      sheet.appendRow(_flattenQuiz(payload));
+    } else {
+      const sheet = _getOrCreateSheet(SHEET_NAME, HEADER);
+      sheet.appendRow(_flattenExercise(payload));
+    }
+    return _json({ ok: true });
   } catch (err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ ok: false, error: String(err) }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return _json({ ok: false, error: String(err) });
   }
 }
 
-/** GET handler — visiting the URL in a browser confirms the deploy worked. */
-function doGet() {
-  return ContentService
-    .createTextOutput("Preference Ranking webhook is live. POST JSON to submit.")
-    .setMimeType(ContentService.MimeType.TEXT);
+/**
+ * GET handler.
+ *
+ *   - With no params (or just visiting the URL in a browser): a friendly
+ *     message confirming the deployment works.
+ *   - With ?action=quiz_status&email=...: returns the most recent
+ *     QuizSubmissions row for that email (case-insensitive) as
+ *     { completed: true, score, max_score, timestamp, trainer_name, answers }
+ *     or { completed: false } if no row exists.
+ */
+function doGet(e) {
+  try {
+    const params = (e && e.parameter) || {};
+    if (params.action === "quiz_status") {
+      return _json(_quizStatusForEmail(params.email || ""));
+    }
+    return ContentService
+      .createTextOutput("Preference Ranking webhook is live. POST JSON to submit.")
+      .setMimeType(ContentService.MimeType.TEXT);
+  } catch (err) {
+    return _json({ ok: false, error: String(err) });
+  }
 }
 
-function _getOrCreateSheet() {
+function _quizStatusForEmail(emailRaw) {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return { completed: false };
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
+  const sheet = ss.getSheetByName(QUIZ_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return { completed: false };
+
+  const values = sheet.getDataRange().getValues();
+  const header = values[0];
+  const emailCol = header.indexOf("trainer_email");
+  if (emailCol === -1) return { completed: false };
+
+  // Walk from bottom up so we return the most recent matching row.
+  for (let i = values.length - 1; i >= 1; i--) {
+    const row = values[i];
+    const cellEmail = String(row[emailCol] || "").trim().toLowerCase();
+    if (cellEmail === email) {
+      const record = {};
+      for (let j = 0; j < header.length; j++) record[header[j]] = row[j];
+      let answers = {};
+      try {
+        answers = JSON.parse(record.answers_json || "{}");
+      } catch (_) {
+        answers = {};
+      }
+      return {
+        completed: true,
+        score: record.total_score,
+        max_score: record.max_score,
+        timestamp: record.timestamp_utc,
+        trainer_name: record.trainer_name,
+        answers: answers,
+      };
+    }
+  }
+  return { completed: false };
+}
+
+function _getOrCreateSheet(name, header) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(name);
   if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    sheet.appendRow(HEADER);
-    sheet.getRange(1, 1, 1, HEADER.length).setFontWeight("bold");
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(header);
+    sheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
     sheet.setFrozenRows(1);
   } else if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADER);
-    sheet.getRange(1, 1, 1, HEADER.length).setFontWeight("bold");
+    sheet.appendRow(header);
+    sheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
     sheet.setFrozenRows(1);
   }
   return sheet;
 }
 
-function _flatten(p) {
+function _flattenExercise(p) {
   const r = p.ratings || {};
   const ra = r.A || {}, rb = r.B || {}, rc = r.C || {};
   const pairs = p.pairs || {};
@@ -93,4 +170,27 @@ function _flatten(p) {
     p.overall_comment || "",
     p.elapsed_seconds || "",
   ];
+}
+
+function _flattenQuiz(p) {
+  const answers = p.answers || {};
+  const correctness = p.correctness || {};
+  const blob = JSON.stringify({ answers: answers, correctness: correctness });
+  return [
+    p.submission_id || "",
+    p.timestamp_utc || "",
+    p.trainer_name || "",
+    p.trainer_email || "",
+    p.total_score != null ? p.total_score : "",
+    p.max_score != null ? p.max_score : "",
+    p.elapsed_seconds != null ? p.elapsed_seconds : "",
+    p.quiz_version || "",
+    blob,
+  ];
+}
+
+function _json(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }

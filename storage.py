@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -182,6 +183,39 @@ def _header_row() -> list[str]:
     ]
 
 
+QUIZ_HEADER: list[str] = [
+    "submission_id",
+    "timestamp_utc",
+    "trainer_name",
+    "trainer_email",
+    "total_score",
+    "max_score",
+    "elapsed_seconds",
+    "quiz_version",
+    "answers_json",
+]
+
+
+def _flatten_quiz_for_sheet(payload: dict[str, Any]) -> list[Any]:
+    return [
+        payload["submission_id"],
+        payload["timestamp_utc"],
+        payload.get("trainer_name", ""),
+        payload.get("trainer_email", ""),
+        payload.get("total_score", ""),
+        payload.get("max_score", ""),
+        payload.get("elapsed_seconds", ""),
+        payload.get("quiz_version", ""),
+        json.dumps(
+            {
+                "answers": payload.get("answers", {}),
+                "correctness": payload.get("correctness", {}),
+            },
+            ensure_ascii=False,
+        ),
+    ]
+
+
 def _flatten_for_sheet(payload: dict[str, Any]) -> list[Any]:
     r = payload["ratings"]
     p = payload["pairs"]
@@ -262,12 +296,204 @@ def _write_local(payload: dict[str, Any]) -> Path:
     return out_path
 
 
+def _write_local_quiz(payload: dict[str, Any]) -> Path:
+    """Quiz local backup uses a quiz_ prefix so the admin viewer can tell them apart."""
+    out_path = SUBMISSIONS_DIR / f"quiz_{payload['submission_id']}.json"
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    return out_path
+
+
 def list_local_submissions() -> list[dict[str, Any]]:
-    """Read every JSON file in submissions/. Useful for the admin viewer."""
+    """Read every exercise-submission JSON file in submissions/. Excludes quiz_* files."""
     rows: list[dict[str, Any]] = []
     for f in sorted(SUBMISSIONS_DIR.glob("*.json")):
+        if f.name.startswith("quiz_"):
+            continue
         try:
             rows.append(json.loads(f.read_text()))
         except json.JSONDecodeError:
             continue
     return rows
+
+
+def list_local_quiz_submissions() -> list[dict[str, Any]]:
+    """Read every quiz_*.json backup in submissions/."""
+    rows: list[dict[str, Any]] = []
+    for f in sorted(SUBMISSIONS_DIR.glob("quiz_*.json")):
+        try:
+            rows.append(json.loads(f.read_text()))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+# -----------------------------------------------------------------------------
+# Quiz API
+# -----------------------------------------------------------------------------
+
+def save_quiz_submission(payload: dict[str, Any]) -> tuple[bool, str, str]:
+    """Persist a quiz submission. Returns (success, message, submission_id).
+
+    Same priority chain as `save_submission`: local backup first (always),
+    then webhook, then Sheets API, then local-only. The payload's `type` field
+    is forced to "quiz" so the Apps Script handler can route to the
+    `QuizSubmissions` sheet.
+    """
+    submission_id = payload.get("submission_id") or str(uuid.uuid4())
+    payload = {
+        **payload,
+        "type": "quiz",
+        "submission_id": submission_id,
+        "timestamp_utc": payload.get("timestamp_utc")
+        or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+    _write_local_quiz(payload)
+
+    webhook = _webhook_url()
+    if webhook:
+        ok, info = _post_to_webhook(webhook, payload)
+        if ok:
+            return True, "Saved quiz score to Google Sheets (local backup also kept).", submission_id
+        return True, (
+            f"Saved locally — Google Sheets unreachable ({info}). "
+            "Your quiz lock will not be enforced until the row reaches the sheet."
+        ), submission_id
+
+    worksheet, sheets_ok = _quiz_sheets_client()
+    if sheets_ok:
+        try:
+            worksheet.append_row(
+                _flatten_quiz_for_sheet(payload),
+                value_input_option="USER_ENTERED",
+            )
+            return True, "Saved quiz score to Google Sheets (local backup also kept).", submission_id
+        except Exception as exc:  # noqa: BLE001
+            return True, (
+                f"Saved locally — Google Sheets append failed ({exc}). "
+                "Your work is safe."
+            ), submission_id
+
+    return True, "Saved quiz score locally (no remote backend configured).", submission_id
+
+
+def quiz_status_for_email(email: str) -> dict[str, Any] | None:
+    """Return prior completed-quiz record for this email, or None.
+
+    Resolution order matches `save_quiz_submission`:
+      1. Webhook (GET `?action=quiz_status&email=...`).
+      2. Local JSON backups in submissions/quiz_*.json.
+
+    Returning None means "no prior completion found OR we couldn't reach the
+    server". `quiz.py` treats None as "let the trainer proceed"; the lock will
+    activate as soon as their submission row lands in the sheet.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+
+    webhook = _webhook_url()
+    if webhook:
+        record = _get_quiz_status_from_webhook(webhook, email)
+        if record is not None:
+            return record
+        # Webhook reachable but didn't return useful data — fall through to
+        # local backups as a safety net.
+
+    # Fallback: scan local JSON backups (only useful for single-machine runs).
+    for row in list_local_quiz_submissions():
+        if (row.get("trainer_email") or "").strip().lower() == email:
+            return {
+                "completed": True,
+                "score": row.get("total_score"),
+                "max_score": row.get("max_score"),
+                "timestamp": row.get("timestamp_utc"),
+                "trainer_name": row.get("trainer_name"),
+                "answers": row.get("answers"),
+            }
+    return None
+
+
+def _get_quiz_status_from_webhook(url: str, email: str) -> dict[str, Any] | None:
+    """Issue a GET to the Apps Script web-app and return the parsed JSON.
+
+    The Apps Script handler responds with:
+      { "completed": false }                — no row found
+      { "completed": true, "score": ..., "max_score": ..., "timestamp": ...,
+        "trainer_name": ..., "answers": {...} }
+    Returns None on any transport / parse error so the caller can decide what
+    to do.
+    """
+    query = urllib.parse.urlencode({"action": "quiz_status", "email": email})
+    full = f"{url}?{query}"
+    req = urllib.request.Request(full, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (301, 302, 303, 307, 308) and exc.headers.get("Location"):
+            new_url = exc.headers["Location"]
+            req2 = urllib.request.Request(new_url, method="GET")
+            try:
+                with urllib.request.urlopen(req2, timeout=15) as resp:
+                    text = resp.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                return None
+        else:
+            return None
+    except (urllib.error.URLError, TimeoutError):
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+    if not parsed.get("completed"):
+        return None
+    return parsed
+
+
+def _quiz_sheets_client():
+    """Return a (worksheet, available) pair for the QuizSubmissions tab.
+
+    Reuses the same service-account credentials as `_sheets_client()` but
+    targets a separate worksheet (configurable via secrets:
+    `sheet.quiz_worksheet`, defaulting to "QuizSubmissions").
+    """
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        return None, False
+
+    if not (_safe_get_secret("gcp_service_account") and _safe_get_secret("sheet")):
+        return None, False
+
+    try:
+        creds = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]),
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ],
+        )
+        client = gspread.authorize(creds)
+        sheet_key = st.secrets["sheet"]["key"]
+        worksheet_name = st.secrets["sheet"].get("quiz_worksheet", "QuizSubmissions")
+        spreadsheet = client.open_by_key(sheet_key)
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(
+                title=worksheet_name, rows=1000, cols=26
+            )
+            worksheet.append_row(QUIZ_HEADER)
+        return worksheet, True
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Google Sheets (quiz) backend unavailable: {exc}")
+        return None, False

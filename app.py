@@ -1,15 +1,17 @@
 """
 Preference Ranking — Trainer Practice App.
 
-Mirrors the in-tool grading UI (see screenshots in /test/) with:
+Two independent modes, picked from a landing page:
 
-  - top banner: user request + predicted category
-  - sidebar: trainer info + nav + progress (with green ✅ for done sections)
-  - per-response: 4 dimensions + holistic Satisfaction, each with inline ✅
-  - per-pair: side-by-side responses + 7-point comparison
-  - final overall comment
+  1. **Knowledge Quiz** (`?mode=quiz`) — 33-item self-study quiz built from
+     `Project_data/Preference_Ranking_QA_Quiz_v3.md`. Each answer freezes on
+     click; the correct answer + rule are revealed inline; a per-email
+     completion lock prevents retakes.
+  2. **Grading Exercise** (`?mode=exercise`) — the existing 3-response grading
+     UI that mirrors the in-tool grading screen.
 
-Submissions are saved via storage.save_submission (Sheets or local JSON).
+Both modes share trainer name + email and persist via `storage.save_submission`
+/ `storage.save_quiz_submission` (Sheets or local JSON).
 
 Run locally:
     streamlit run trainer_app/app.py
@@ -27,6 +29,7 @@ import streamlit as st
 
 from tasks import get_task
 from storage import save_submission, list_local_submissions
+from quiz import render_quiz, quiz_persistent_keys
 
 
 # -----------------------------------------------------------------------------
@@ -64,6 +67,22 @@ st.markdown(
       .question-label { font-weight: 600; font-size: 15px; margin: 12px 0 4px 0; }
       .tick-ok { color: #10b981; font-weight: 700; }
       .tick-pending { color: #cbd5e1; font-weight: 700; }
+
+      .landing-hero {
+        background: linear-gradient(120deg, #1f2937, #0f172a);
+        color: #f1f5f9; padding: 26px 28px; border-radius: 12px;
+        margin-bottom: 18px;
+      }
+      .landing-hero h1 { font-size: 22px; margin: 0 0 6px 0; }
+      .landing-hero p { margin: 0; color: #cbd5e1; font-size: 14px; }
+
+      .mode-card {
+        background: #ffffff; border: 1px solid #e5e7eb;
+        border-radius: 12px; padding: 18px 20px; height: 100%;
+      }
+      .mode-card h3 { margin: 0 0 6px 0; font-size: 17px; color: #0f172a; }
+      .mode-card p  { margin: 0 0 10px 0; color: #475569; font-size: 14px; line-height: 1.5; }
+      .mode-card ul { margin: 0 0 12px 18px; padding: 0; color: #475569; font-size: 13px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -106,6 +125,7 @@ PERSISTENT_KEYS: list[str] = (
      for d in ("following", "concision", "concision_dir", "truthful", "satisfaction")]
     + ["pair_B_vs_A", "pair_C_vs_A", "pair_C_vs_B"]
     + ["trainer_name", "trainer_email", "overall_comment"]
+    + quiz_persistent_keys()
 )
 
 
@@ -518,7 +538,7 @@ def render_sidebar(task: dict) -> str:
 
     st.sidebar.divider()
     st.sidebar.caption(
-        "Practice clone of the grading tool. ✅ marks completed sections. "
+        "✅ marks completed sections. "
         "Your answers are kept when you switch tabs."
     )
     return st.session_state.current_tab
@@ -557,11 +577,14 @@ def _readiness_checklist() -> list[tuple[str, bool]]:
 def render_submit_panel(task: dict) -> None:
     st.subheader("Final comment & submit")
     st.caption(
-        "Write **one** comment that justifies your **overall ranking of all "
-        "three responses** (Rank 1, 2, 3). Name each response (A, B, C), "
-        "compare them on concrete reasons, and tie each placement to a "
-        "dimension (Following / Truthfulness / Concision / Satisfaction). "
-        "English only. Minimum 30 characters."
+        "Write English comment that justifies all three pairwise "
+        "preferences (A↔B, B↔C, C↔A): name every response (A, B, C), "
+        "compare them on concrete reasons (exact instruction violated, "
+        "wrong output, failed edge case, missing detail), and identify "
+        "which dimension — Following Instructions, Localization, "
+        "Concision, Truthfulness, or Satisfaction — drove each "
+        "preference. Avoid generic checklists like \"all responses are "
+        "concise/truthful.\""
     )
     _question(
         "Please describe the reasons for your gradings",
@@ -660,19 +683,10 @@ def _build_payload(task: dict) -> dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# Main
+# Exercise mode (the original grading flow)
 # -----------------------------------------------------------------------------
 
-def main() -> None:
-    # CRITICAL: must run BEFORE any widget renders so unmounted widgets'
-    # values survive tab navigation.
-    _persist_widget_state()
-    _init_state()
-
-    if st.query_params.get("admin") == "1":
-        render_admin()
-        return
-
+def render_exercise() -> None:
     task = get_task()
 
     st.markdown(
@@ -692,11 +706,13 @@ def main() -> None:
     # Post-submit view replaces the form; the sidebar stays hidden until reset.
     if st.session_state.get("submitted"):
         render_post_submit_view(task)
+        _render_home_button_sidebar()
         return
 
     st.markdown('<div class="section-h">Evaluation</div>', unsafe_allow_html=True)
 
     selected = render_sidebar(task)
+    _render_home_button_sidebar()
 
     if selected == "Response A":
         render_response_panel(task, task["responses"][0])
@@ -712,6 +728,131 @@ def main() -> None:
         render_pair_panel(task, left_id="B", right_id="C")
     elif selected == "Submit":
         render_submit_panel(task)
+
+
+def _render_home_button_sidebar() -> None:
+    """Tail of every mode's sidebar: a way back to the landing page."""
+    st.sidebar.divider()
+    if st.sidebar.button("← Back to home", key="back_home_exercise",
+                         use_container_width=True):
+        st.query_params.clear()
+        st.rerun()
+
+
+# -----------------------------------------------------------------------------
+# Landing page (mode picker)
+# -----------------------------------------------------------------------------
+
+def render_landing() -> None:
+    st.markdown(
+        '<div class="landing-hero">'
+        '<h1>Preference Ranking — Trainer Practice</h1>'
+        '<p>Pick one of the two modes below. Each is self-contained; you can '
+        'do them in any order.</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("### Your details")
+    c_name, c_email = st.columns(2)
+    with c_name:
+        st.text_input(
+            "Your name", key="trainer_name",
+            placeholder="Jane Doe",
+        )
+    with c_email:
+        st.text_input(
+            "Your email", key="trainer_email",
+            placeholder="jane@example.com",
+            help="Used to lock the quiz to one attempt per trainer.",
+        )
+
+    name_ok = bool(st.session_state.get("trainer_name", "").strip())
+    email_ok = bool(st.session_state.get("trainer_email", "").strip())
+    can_start = name_ok and email_ok
+
+    if not can_start:
+        st.info("Enter your name and email above to unlock both modes.")
+
+    st.markdown("### Choose a mode")
+    col_q, col_e = st.columns(2, gap="large")
+
+    with col_q:
+        st.markdown(
+            '<div class="mode-card">'
+            '<h3>Part 1 · Knowledge Quiz</h3>'
+            '<p>33 multiple-choice and true/false items distilled from the '
+            'project guide. Click an option to lock it in and reveal the '
+            'correct answer + rule.</p>'
+            '<ul>'
+            '<li>One attempt per email (server-enforced)</li>'
+            '<li>Inline reveal of correct answer after each click</li>'
+            '</ul>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Take the Knowledge Quiz",
+            type="primary",
+            disabled=not can_start,
+            use_container_width=True,
+            key="go_quiz",
+        ):
+            st.query_params["mode"] = "quiz"
+            st.rerun()
+
+    with col_e:
+        st.markdown(
+            '<div class="mode-card">'
+            '<h3>Part 2 · Grading Exercise</h3>'
+            '<p>Rate three candidate responses on the four dimensions, run '
+            'all three pairwise comparisons, and write one comparative '
+            'comment justifying the final ranking.</p>'
+            '<ul>'
+            '<li>Mirrors the production grading UI</li>'
+            '<li>Multiple attempts allowed</li>'
+            '</ul>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Start the Grading Exercise",
+            type="primary",
+            disabled=not can_start,
+            use_container_width=True,
+            key="go_exercise",
+        ):
+            st.query_params["mode"] = "exercise"
+            st.rerun()
+
+    st.divider()
+    st.caption(
+        "Tip: bookmark `?mode=quiz` or `?mode=exercise` to jump straight to "
+        "either flow on your next visit."
+    )
+
+
+# -----------------------------------------------------------------------------
+# Main router
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    # CRITICAL: must run BEFORE any widget renders so unmounted widgets'
+    # values survive tab navigation.
+    _persist_widget_state()
+    _init_state()
+
+    if st.query_params.get("admin") == "1":
+        render_admin()
+        return
+
+    mode = st.query_params.get("mode", "")
+    if mode == "quiz":
+        render_quiz()
+    elif mode == "exercise":
+        render_exercise()
+    else:
+        render_landing()
 
 
 if __name__ == "__main__":
