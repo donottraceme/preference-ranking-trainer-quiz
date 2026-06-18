@@ -28,7 +28,12 @@ from typing import Any
 import streamlit as st
 
 from tasks import get_task
-from storage import save_submission, list_local_submissions
+from storage import (
+    save_submission,
+    list_local_submissions,
+    list_local_quiz_submissions,
+    QUIZ_HEADER,
+)
 from quiz import render_quiz, quiz_persistent_keys
 
 
@@ -256,8 +261,10 @@ def render_admin() -> None:
         "for submissions where the webhook itself failed."
     )
 
-    rows = list_local_submissions()
-    if not rows:
+    quiz_rows = list_local_quiz_submissions()
+    exercise_rows = list_local_submissions()
+
+    if not quiz_rows and not exercise_rows:
         st.info(
             "No local JSON files on this container. Either nothing's been "
             "submitted since the last restart, or every submission since "
@@ -265,14 +272,118 @@ def render_admin() -> None:
         )
         return
 
-    st.success(f"{len(rows)} local file(s) on disk.")
+    st.markdown("## Part 1 · Knowledge Quiz submissions")
+    _render_admin_quiz_section(quiz_rows)
 
-    # ---- bulk-download controls ----
+    st.divider()
+
+    st.markdown("## Part 2 · Grading Exercise submissions")
+    _render_admin_exercise_section(exercise_rows)
+
+
+def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        st.info("No quiz local backups on this container yet.")
+        return
+
+    st.success(f"{len(rows)} quiz local file(s) on disk.")
+
     import csv
     import io
+    import json as _json
     import zipfile
 
-    # CSV: same column layout as the Google Sheet for easy comparison.
+    # CSV: column layout matches storage.QUIZ_HEADER (one row = one quiz).
+    csv_buf = io.StringIO()
+    writer = csv.writer(csv_buf)
+    writer.writerow(QUIZ_HEADER)
+    for r in rows:
+        writer.writerow([
+            r.get("submission_id", ""),
+            r.get("timestamp_utc", ""),
+            r.get("trainer_name", ""),
+            r.get("trainer_email", ""),
+            r.get("total_score", ""),
+            r.get("max_score", ""),
+            r.get("elapsed_seconds", ""),
+            r.get("quiz_version", ""),
+            _json.dumps(
+                {
+                    "answers": r.get("answers", {}),
+                    "correctness": r.get("correctness", {}),
+                },
+                ensure_ascii=False,
+            ),
+        ])
+    csv_bytes = csv_buf.getvalue().encode("utf-8")
+
+    # Zip: one raw JSON per submission, prefixed `quiz_` to mirror disk layout.
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in rows:
+            sid = r.get("submission_id", "unknown")
+            zf.writestr(
+                f"quiz_{sid}.json",
+                _json.dumps(r, indent=2, ensure_ascii=False),
+            )
+    zip_bytes = zip_buf.getvalue()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "Download quiz CSV",
+            data=csv_bytes,
+            file_name="quiz_submissions.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_quiz_csv",
+        )
+    with c2:
+        st.download_button(
+            "Download quiz ZIP (raw JSONs)",
+            data=zip_bytes,
+            file_name="quiz_submissions.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key="dl_quiz_zip",
+        )
+
+    st.markdown("### Preview")
+    table_rows: list[dict[str, Any]] = []
+    for r in rows:
+        table_rows.append({
+            "timestamp_utc": r.get("timestamp_utc", ""),
+            "trainer_name": r.get("trainer_name", ""),
+            "trainer_email": r.get("trainer_email", ""),
+            "score": (
+                f"{r.get('total_score', '?')} / {r.get('max_score', '?')}"
+            ),
+            "elapsed_s": r.get("elapsed_seconds", ""),
+            "id": (r.get("submission_id", "") or "")[:8],
+        })
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("### Per-submission details")
+    for r in rows:
+        with st.expander(
+            f"{r.get('timestamp_utc', '?')} — {r.get('trainer_name', '?')} — "
+            f"{r.get('submission_id', '?')[:8]}",
+        ):
+            st.json(r)
+
+
+def _render_admin_exercise_section(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        st.info("No grading-exercise local backups on this container yet.")
+        return
+
+    st.success(f"{len(rows)} exercise local file(s) on disk.")
+
+    import csv
+    import io
+    import json as _json
+    import zipfile
+
     csv_buf = io.StringIO()
     writer = csv.writer(csv_buf)
     writer.writerow([
@@ -302,10 +413,8 @@ def render_admin() -> None:
         ])
     csv_bytes = csv_buf.getvalue().encode("utf-8")
 
-    # Zip: all raw JSONs in one archive.
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        import json as _json
         for r in rows:
             sid = r.get("submission_id", "unknown")
             zf.writestr(f"{sid}.json",
@@ -315,24 +424,25 @@ def render_admin() -> None:
     c1, c2 = st.columns(2)
     with c1:
         st.download_button(
-            "Download all as CSV",
+            "Download exercise CSV",
             data=csv_bytes,
             file_name="submissions.csv",
             mime="text/csv",
             use_container_width=True,
+            key="dl_exercise_csv",
         )
     with c2:
         st.download_button(
-            "Download all as ZIP (raw JSONs)",
+            "Download exercise ZIP (raw JSONs)",
             data=zip_bytes,
             file_name="submissions.zip",
             mime="application/zip",
             use_container_width=True,
+            key="dl_exercise_zip",
         )
 
-    # ---- tabular preview ----
     st.markdown("### Preview")
-    table_rows = []
+    table_rows: list[dict[str, Any]] = []
     for r in rows:
         table_rows.append({
             "timestamp_utc": r.get("timestamp_utc", ""),
@@ -343,7 +453,6 @@ def render_admin() -> None:
         })
     st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
-    # ---- per-row drilldown ----
     st.markdown("### Per-submission details")
     for r in rows:
         with st.expander(
