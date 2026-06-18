@@ -145,6 +145,12 @@ def _persist_widget_state() -> None:
 # Helpers
 # -----------------------------------------------------------------------------
 
+def _is_valid_turing_email(email: str) -> bool:
+    """Domain-restrict trainer emails to @turing.com (case-insensitive)."""
+    e = (email or "").strip().lower()
+    return e.endswith("@turing.com") and len(e) > len("@turing.com")
+
+
 def _filled(key: str) -> bool:
     val = st.session_state.get(key, UNSELECTED)
     if isinstance(val, str):
@@ -691,14 +697,14 @@ def _build_payload(task: dict) -> dict[str, Any]:
 
 def render_exercise() -> None:
     # Trainer identity is captured on the landing page now. If someone
-    # deep-links to ?mode=exercise without it, route them back instead
-    # of letting them submit an anonymous row.
+    # deep-links to ?mode=exercise without it (or with a non-Turing email),
+    # route them back instead of letting them submit an anonymous row.
     name = (st.session_state.get("trainer_name") or "").strip()
     email = (st.session_state.get("trainer_email") or "").strip()
-    if not name or not email:
+    if not name or not email or not _is_valid_turing_email(email):
         st.warning(
-            "Please go back to the home page and enter your name + email "
-            "before starting the grading exercise."
+            "Please go back to the home page and enter your name + a "
+            "@turing.com email before starting the grading exercise."
         )
         if st.button("← Back to home", key="exercise_gate_back_home"):
             st.query_params.clear()
@@ -780,17 +786,20 @@ def render_landing() -> None:
         )
     with c_email:
         st.text_input(
-            "Your email", key="trainer_email",
-            placeholder="jane@example.com",
-            help="Used to lock the quiz to one attempt per trainer.",
+            "Your Turing Email", key="trainer_email",
+            placeholder="jane@turing.com",
+            help="Must end with @turing.com. Used to lock the quiz to one attempt per trainer.",
         )
 
     name_ok = bool(st.session_state.get("trainer_name", "").strip())
-    email_ok = bool(st.session_state.get("trainer_email", "").strip())
+    email_raw = (st.session_state.get("trainer_email") or "").strip()
+    email_ok = _is_valid_turing_email(email_raw)
     can_start = name_ok and email_ok
 
-    if not can_start:
-        st.info("Enter your name and email above to unlock both modes.")
+    if email_raw and not email_ok:
+        st.error("Email must be a @turing.com address.")
+    elif not can_start:
+        st.info("Enter your name and Turing email above to unlock both modes.")
 
     st.markdown("### Choose a mode")
     col_q, col_e = st.columns(2, gap="large")

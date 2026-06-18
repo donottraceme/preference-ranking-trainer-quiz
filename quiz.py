@@ -339,15 +339,18 @@ def _render_post_submit() -> None:
 
 def render_quiz() -> None:
     """Entry point called from app.py when `?mode=quiz`."""
-    # Require trainer identity. We route back to the landing page if missing.
+    # Lazy import keeps quiz.py importable in isolation while still
+    # reusing the canonical @turing.com validator from app.py.
+    from app import _is_valid_turing_email
+
     email = (st.session_state.get("trainer_email") or "").strip()
     name = (st.session_state.get("trainer_name") or "").strip()
-    if not email or not name:
+    if not name or not email or not _is_valid_turing_email(email):
         st.warning(
-            "Please go back to the home page and enter your name + email "
-            "before starting the quiz."
+            "Please go back to the home page and enter your name + a "
+            "@turing.com email before starting the quiz."
         )
-        if st.button("← Back to home"):
+        if st.button("← Back to home", key="quiz_gate_back_home"):
             st.query_params.clear()
             st.rerun()
         return
