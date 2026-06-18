@@ -499,9 +499,12 @@ def render_pair_panel(task: dict, left_id: str, right_id: str) -> None:
 # -----------------------------------------------------------------------------
 
 def render_sidebar(task: dict) -> str:
-    st.sidebar.header("Trainer info")
-    st.sidebar.text_input("Your name", key="trainer_name", placeholder="Jane Doe")
-    st.sidebar.text_input("Your email", key="trainer_email", placeholder="jane@example.com")
+    name = (st.session_state.get("trainer_name") or "").strip() or "—"
+    email = (st.session_state.get("trainer_email") or "").strip() or "—"
+    st.sidebar.header("Trainer")
+    st.sidebar.markdown(f"**{name}**  \n<span style='color:#6b7280;font-size:12px'>{email}</span>",
+                        unsafe_allow_html=True)
+    st.sidebar.caption("To change these, click 'Back to home' at the bottom.")
     st.sidebar.divider()
 
     tabs = ["Response A", "Response B", "Response C", "B and A", "C and A", "C and B", "Submit"]
@@ -687,6 +690,21 @@ def _build_payload(task: dict) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 def render_exercise() -> None:
+    # Trainer identity is captured on the landing page now. If someone
+    # deep-links to ?mode=exercise without it, route them back instead
+    # of letting them submit an anonymous row.
+    name = (st.session_state.get("trainer_name") or "").strip()
+    email = (st.session_state.get("trainer_email") or "").strip()
+    if not name or not email:
+        st.warning(
+            "Please go back to the home page and enter your name + email "
+            "before starting the grading exercise."
+        )
+        if st.button("← Back to home", key="exercise_gate_back_home"):
+            st.query_params.clear()
+            st.rerun()
+        return
+
     task = get_task()
 
     st.markdown(
@@ -809,7 +827,6 @@ def render_landing() -> None:
             'all three pairwise comparisons, and write one comparative '
             'comment justifying the final ranking.</p>'
             '<ul>'
-            '<li>Mirrors the production grading UI</li>'
             '<li>Multiple attempts allowed</li>'
             '</ul>'
             '</div>',

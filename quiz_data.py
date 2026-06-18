@@ -61,7 +61,7 @@ _TF_OPTIONS = [("true", "True"), ("false", "False")]
 
 QUIZ: dict = {
     "version": "v3",
-    "max_points": 38,
+    "max_points": 34,
     "blurb": (
         "**Format:** MCQ + True/False. Each answer freezes the moment you "
         "click it and the correct answer + rule are revealed inline. "
@@ -635,35 +635,6 @@ QUIZ: dict = {
                         "Slightly Satisfying."
                     ),
                 },
-                {
-                    "id": "E4",
-                    "type": "tf",
-                    "points": 1,
-                    "prompt": (
-                        "**True / False:** *\"If your dimension ratings "
-                        "imply Satisfaction must cap at 'Slightly "
-                        "Satisfying' but you select 'Highly Satisfying' "
-                        "anyway because you think the response is great "
-                        "overall, the tool will let you submit and your "
-                        "override will stand.\"*"
-                    ),
-                    "options": _TF_OPTIONS,
-                    "correct": "false",
-                    "rule": (
-                        "**Answer: False.**  \n"
-                        "**Rule (§4.5):** *\"The tool **enforces** these "
-                        "constraints. If you select an illegal Satisfaction "
-                        "level for the dimensions you've chosen, submission "
-                        "will fail.\"* Floor/ceiling rules are "
-                        "hard-enforced — pick a Satisfaction level "
-                        "consistent with your dimension ratings, or fix the "
-                        "dimension ratings if you genuinely believe the "
-                        "response is Highly Satisfying.  \n"
-                        "**Bonus rule (§4.5):** *\"Don't factor model "
-                        "identity (\\\"As an Apple AFM model…\\\") into the "
-                        "rating.\"*"
-                    ),
-                },
             ],
         },
         # ---------------------------------------------------------------
@@ -779,27 +750,6 @@ QUIZ: dict = {
                         "throughout. The other three are quoted verbatim "
                         "from §6.2 as **bad** comments — generic / "
                         "non-comparative / vague."
-                    ),
-                },
-                {
-                    "id": "G2",
-                    "type": "tf",
-                    "points": 1,
-                    "prompt": (
-                        "**True / False:** *\"For a fr_FR task, my comment "
-                        "must be written in French so it matches the locale "
-                        "of the prompt.\"*"
-                    ),
-                    "options": _TF_OPTIONS,
-                    "correct": "false",
-                    "rule": (
-                        "**Answer: False.**  \n"
-                        "**Rule (§6 + Comments guardrails):** *\"English "
-                        "only, regardless of locale.\"* Comment language is "
-                        "decoupled from prompt locale — engineers downstream "
-                        "read comments in English. The comment must also "
-                        "**name** the responses (A, B, C…), **compare** "
-                        "them, and cite **specific** reasons."
                     ),
                 },
                 {
@@ -944,43 +894,6 @@ QUIZ: dict = {
                     ),
                 },
                 {
-                    "id": "R4",
-                    "type": "mcq",
-                    "points": 2,
-                    "prompt": (
-                        "**R4 — Ambiguous prompt (tax rate)**  \n"
-                        "> **User Request:** *\"What is my tax rate?\"* (no "
-                        "location given.)\n\n"
-                        "| | Response A | Response B |\n"
-                        "| --- | --- | --- |\n"
-                        "| Text (excerpt) | *\"The Texas state income tax "
-                        "rate was 0% in 2022, which means the state does "
-                        "not collect personal income tax. However, Texas "
-                        "residents are subject to federal income tax…\"* | "
-                        "*\"To answer that, I need a bit more context — "
-                        "could you let me know which country (and "
-                        "state/province if applicable) you're filing in, "
-                        "and whether you mean income tax, sales tax, or "
-                        "something else?\"* |"
-                    ),
-                    "options": _PAIRWISE_AB,
-                    "correct": "b_better",
-                    "rule": (
-                        "**Answer: B Better** (B Slightly Better is also "
-                        "defensible).  \n"
-                        "**Rule (§5.3 Special Considerations):** "
-                        "*\"Ambiguous request / missing context → Prefer "
-                        "the response that asks for clarification.\"* §4.5 "
-                        "Example — Simple labels A's behaviour as "
-                        "**Slightly Unsatisfying** (assumes Texas) and the "
-                        "clarification ask as **Slightly Satisfying** — "
-                        "that's a Satisfaction-gap on a major dimension "
-                        "(Truthfulness via assumption), so **Better** is "
-                        "the cleanest call. **Not Much Better** — A still "
-                        "attempts to address the request."
-                    ),
-                },
-                {
                     "id": "R5a",
                     "type": "mcq",
                     "points": 2,
@@ -1051,7 +964,7 @@ def total_points() -> int:
     return sum(q["points"] for _, q in iter_questions())
 
 
-assert total_items() == 32, f"Expected 32 questions, got {total_items()}"
+assert total_items() == 29, f"Expected 29 questions, got {total_items()}"
 assert total_points() == QUIZ["max_points"], (
     f"Point total {total_points()} does not match max_points {QUIZ['max_points']}"
 )
