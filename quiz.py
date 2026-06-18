@@ -337,12 +337,19 @@ def _render_post_submit() -> None:
 # Public entry point
 # -----------------------------------------------------------------------------
 
+def _is_valid_turing_email(email: str) -> bool:
+    """Mirror of the validator in app.py.
+
+    Deliberately duplicated (not imported) because on Streamlit Cloud the
+    script runs as `__main__` and `from app import ...` would re-execute
+    app.py as a fresh module, triggering a second `st.set_page_config()`.
+    """
+    e = (email or "").strip().lower()
+    return e.endswith("@turing.com") and len(e) > len("@turing.com")
+
+
 def render_quiz() -> None:
     """Entry point called from app.py when `?mode=quiz`."""
-    # Lazy import keeps quiz.py importable in isolation while still
-    # reusing the canonical @turing.com validator from app.py.
-    from app import _is_valid_turing_email
-
     email = (st.session_state.get("trainer_email") or "").strip()
     name = (st.session_state.get("trainer_name") or "").strip()
     if not name or not email or not _is_valid_turing_email(email):
