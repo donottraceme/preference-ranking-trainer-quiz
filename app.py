@@ -217,6 +217,33 @@ def _reset_form() -> None:
     st.session_state.started_at = time.time()
 
 
+# Keys that belong to a specific exercise instance (ratings, pairs, comment,
+# submission markers). Reset between tasks so opening Part 3 after Part 2 starts
+# from a clean form. trainer_name / trainer_email are NOT in this list — they
+# survive task switches.
+_EXERCISE_RESET_KEYS: list[str] = (
+    [f"{rid}_{d}"
+     for rid in ("A", "B", "C")
+     for d in ("following", "concision", "concision_dir", "truthful", "satisfaction")]
+    + ["pair_B_vs_A", "pair_C_vs_A", "pair_C_vs_B", "overall_comment"]
+)
+
+
+def _reset_exercise_keep_identity() -> None:
+    """Reset only the grading-exercise widgets and submission state.
+
+    Used when the trainer switches from one task to another via the landing
+    page so they don't see leftover ratings from the previous task. Trainer
+    name + email are intentionally preserved.
+    """
+    for k in _EXERCISE_RESET_KEYS:
+        st.session_state.pop(k, None)
+    for k in ("submitted", "last_submission_id", "last_submission_msg"):
+        st.session_state[k] = "" if k != "submitted" else False
+    st.session_state.current_tab = "Response A"
+    st.session_state.started_at = time.time()
+
+
 # -----------------------------------------------------------------------------
 # Admin viewer (?admin=1)
 # -----------------------------------------------------------------------------
@@ -249,6 +276,23 @@ def _admin_authorized() -> bool:
     return False
 
 
+# Friendly section headers for each exercise task_id, in landing-page order.
+# Anything not in this map falls through to the "Other / unknown task" bucket
+# at the bottom of the admin view so legacy or future rows aren't lost.
+ADMIN_EXERCISE_PARTS: list[tuple[str, str, str]] = [
+    # (task_id, section_heading, short_slug_for_filenames_and_keys)
+    ("coding_random_sampling_v1",
+     "Part 2 · Grading Exercise — Random sampling",
+     "part2_random_sampling"),
+    ("logic_dogs_v1",
+     "Part 3 · Grading Exercise — Kennel logic",
+     "part3_kennel_logic"),
+    ("html_webpage_v1",
+     "Part 4 · Grading Exercise — HTML & CSS",
+     "part4_html_css"),
+]
+
+
 def render_admin() -> None:
     if not _admin_authorized():
         return
@@ -275,10 +319,34 @@ def render_admin() -> None:
     st.markdown("## Part 1 · Knowledge Quiz submissions")
     _render_admin_quiz_section(quiz_rows)
 
-    st.divider()
+    # Group exercise submissions by task_id so each Part gets its own
+    # heading + download buttons + table. Rows missing a task_id (legacy
+    # rows from before the multi-task split) land in "_unknown".
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    for row in exercise_rows:
+        tid = row.get("task_id") or "_unknown"
+        by_task.setdefault(tid, []).append(row)
 
-    st.markdown("## Part 2 · Grading Exercise submissions")
-    _render_admin_exercise_section(exercise_rows)
+    for task_id, heading, slug in ADMIN_EXERCISE_PARTS:
+        st.divider()
+        st.markdown(f"## {heading} submissions")
+        _render_admin_exercise_section(
+            by_task.pop(task_id, []),
+            section_key=slug,
+            filename_slug=slug,
+        )
+
+    # Anything left over — unrecognised task_id (typo, legacy, future task
+    # not yet mapped). Render under a clearly-labelled catch-all section so
+    # rows can't silently disappear.
+    for task_id, rows in by_task.items():
+        st.divider()
+        label = "Legacy / no task_id" if task_id == "_unknown" else f"Task `{task_id}`"
+        st.markdown(f"## Other — {label} submissions")
+        slug = f"other_{task_id.replace('/', '_')}"
+        _render_admin_exercise_section(
+            rows, section_key=slug, filename_slug=slug
+        )
 
 
 def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
@@ -372,9 +440,21 @@ def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
             st.json(r)
 
 
-def _render_admin_exercise_section(rows: list[dict[str, Any]]) -> None:
+def _render_admin_exercise_section(
+    rows: list[dict[str, Any]],
+    *,
+    section_key: str = "default",
+    filename_slug: str = "submissions",
+) -> None:
+    """Render one Part's worth of grading-exercise submissions.
+
+    `section_key` must be unique per call within a single admin render so
+    that `st.download_button` widgets and `st.expander` keys don't collide
+    when the admin shows multiple sections side-by-side.
+    `filename_slug` is the basename used for the downloaded CSV / ZIP.
+    """
     if not rows:
-        st.info("No grading-exercise local backups on this container yet.")
+        st.info("No submissions for this section yet.")
         return
 
     st.success(f"{len(rows)} exercise local file(s) on disk.")
@@ -426,19 +506,19 @@ def _render_admin_exercise_section(rows: list[dict[str, Any]]) -> None:
         st.download_button(
             "Download exercise CSV",
             data=csv_bytes,
-            file_name="submissions.csv",
+            file_name=f"{filename_slug}.csv",
             mime="text/csv",
             use_container_width=True,
-            key="dl_exercise_csv",
+            key=f"dl_exercise_csv_{section_key}",
         )
     with c2:
         st.download_button(
             "Download exercise ZIP (raw JSONs)",
             data=zip_bytes,
-            file_name="submissions.zip",
+            file_name=f"{filename_slug}.zip",
             mime="application/zip",
             use_container_width=True,
-            key="dl_exercise_zip",
+            key=f"dl_exercise_zip_{section_key}",
         )
 
     st.markdown("### Preview")
@@ -451,7 +531,12 @@ def _render_admin_exercise_section(rows: list[dict[str, Any]]) -> None:
             "id": (r.get("submission_id", "") or "")[:8],
             "comment_len": len((r.get("overall_comment", "") or "")),
         })
-    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+    st.dataframe(
+        table_rows,
+        use_container_width=True,
+        hide_index=True,
+        key=f"df_exercise_{section_key}",
+    )
 
     st.markdown("### Per-submission details")
     for r in rows:
@@ -622,14 +707,19 @@ def render_sidebar(task: dict) -> str:
     st.sidebar.caption("To change these, click 'Back to home' at the bottom.")
     st.sidebar.divider()
 
-    tabs = ["Response A", "Response B", "Response C", "B and A", "C and A", "C and B", "Submit"]
+    # Sidebar tab labels follow the in-panel left/right order: when the
+    # pair panel renders A on the left and B on the right, the sidebar
+    # says "A and B" too (not "B and A"). The underlying state keys
+    # (pair_B_vs_A, pair_C_vs_A, pair_C_vs_B) and the storage column
+    # names are intentionally NOT renamed — only the visible label.
+    tabs = ["Response A", "Response B", "Response C", "A and B", "A and C", "B and C", "Submit"]
     done_map = {
         "Response A": _section_done("A"),
         "Response B": _section_done("B"),
         "Response C": _section_done("C"),
-        "B and A": _pair_done("pair_B_vs_A"),
-        "C and A": _pair_done("pair_C_vs_A"),
-        "C and B": _pair_done("pair_C_vs_B"),
+        "A and B": _pair_done("pair_B_vs_A"),
+        "A and C": _pair_done("pair_C_vs_A"),
+        "B and C": _pair_done("pair_C_vs_B"),
         "Submit": False,
     }
 
@@ -804,7 +894,7 @@ def _build_payload(task: dict) -> dict[str, Any]:
 # Exercise mode (the original grading flow)
 # -----------------------------------------------------------------------------
 
-def render_exercise() -> None:
+def render_exercise(task_id: str | None = None) -> None:
     # Trainer identity is captured on the landing page now. If someone
     # deep-links to ?mode=exercise without it (or with a non-Turing email),
     # route them back instead of letting them submit an anonymous row.
@@ -820,7 +910,24 @@ def render_exercise() -> None:
             st.rerun()
         return
 
-    task = get_task()
+    # task_id may come in via ?task=<id>; fall back to the default task on
+    # bad/missing values so the existing Part-2 deep link keeps working.
+    try:
+        task = get_task(task_id) if task_id else get_task()
+    except KeyError:
+        st.error(
+            f"Unknown task id `{task_id}` — sending you back to the home page."
+        )
+        st.query_params.clear()
+        if st.button("← Back to home", key="exercise_bad_task_back_home"):
+            st.rerun()
+        return
+
+    # Reset rating/pair/comment widgets when the trainer switches to a
+    # different task (e.g. opens Part 3 after Part 2). Identity is kept.
+    if st.session_state.get("current_task_id") != task["task_id"]:
+        _reset_exercise_keep_identity()
+        st.session_state.current_task_id = task["task_id"]
 
     st.markdown(
         '<div class="top-banner">Instruction Fine-Tuning Grading — Practice</div>',
@@ -853,11 +960,11 @@ def render_exercise() -> None:
         render_response_panel(task, task["responses"][1])
     elif selected == "Response C":
         render_response_panel(task, task["responses"][2])
-    elif selected == "B and A":
+    elif selected == "A and B":
         render_pair_panel(task, left_id="A", right_id="B")
-    elif selected == "C and A":
+    elif selected == "A and C":
         render_pair_panel(task, left_id="A", right_id="C")
-    elif selected == "C and B":
+    elif selected == "B and C":
         render_pair_panel(task, left_id="B", right_id="C")
     elif selected == "Submit":
         render_submit_panel(task)
@@ -908,9 +1015,17 @@ def render_landing() -> None:
     if email_raw and not email_ok:
         st.error("Email must be a @turing.com address.")
     elif not can_start:
-        st.info("Enter your name and Turing email above to unlock both modes.")
+        st.info("Enter your name and Turing email above to unlock all modes.")
+
+    def _go_exercise(task_id: str) -> None:
+        """Navigate to the grading exercise for a specific task_id."""
+        st.query_params.clear()
+        st.query_params["mode"] = "exercise"
+        st.query_params["task"] = task_id
+        st.rerun()
 
     st.markdown("### Choose a mode")
+    # Row 1 — Part 1 (Quiz) + Part 2 (canonical PDF random-sampling task)
     col_q, col_e = st.columns(2, gap="large")
 
     with col_q:
@@ -934,17 +1049,19 @@ def render_landing() -> None:
             use_container_width=True,
             key="go_quiz",
         ):
+            st.query_params.clear()
             st.query_params["mode"] = "quiz"
             st.rerun()
 
     with col_e:
         st.markdown(
             '<div class="mode-card">'
-            '<h3>Part 2 · Grading Exercise</h3>'
+            '<h3>Part 2 · Grading Exercise — Random sampling</h3>'
             '<p>Rate three candidate responses on the four dimensions, run '
             'all three pairwise comparisons, and write one comparative '
             'comment justifying the final ranking.</p>'
             '<ul>'
+            '<li>Topic: Python sampling without replacement</li>'
             '<li>Multiple attempts allowed</li>'
             '</ul>'
             '</div>',
@@ -957,13 +1074,67 @@ def render_landing() -> None:
             use_container_width=True,
             key="go_exercise",
         ):
-            st.query_params["mode"] = "exercise"
-            st.rerun()
+            _go_exercise("coding_random_sampling_v1")
+
+    # Row 2 — additional grading exercises (same UX as Part 2, different
+    # task_id). Each button switches the active task; per-task widget state
+    # is reset on entry so you start with a clean form.
+    st.markdown("")  # vertical breathing room between the two rows
+    col_p3, col_p4 = st.columns(2, gap="large")
+
+    with col_p3:
+        st.markdown(
+            '<div class="mode-card">'
+            '<h3>Part 3 · Grading Exercise — Kennel logic</h3>'
+            '<p>Same flow as Part 2, but applied to a set-theory word '
+            'problem about 24 kennel dogs (color / tail / hair). Compare '
+            'three derivations of the same target count.</p>'
+            '<ul>'
+            '<li>Topic: inclusion–exclusion reasoning</li>'
+            '<li>Multiple attempts allowed</li>'
+            '</ul>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Start Grading Exercise — Kennel logic",
+            type="primary",
+            disabled=not can_start,
+            use_container_width=True,
+            key="go_exercise_dogs",
+        ):
+            _go_exercise("logic_dogs_v1")
+
+    with col_p4:
+        st.markdown(
+            '<div class="mode-card">'
+            '<h3>Part 4 · Grading Exercise — HTML &amp; CSS</h3>'
+            '<p>Same flow as Part 2, applied to a "build a simple webpage" '
+            'request. Three responses all produce a working page; '
+            'differentiation is idiomatic CSS placement and presentational '
+            'artifacts.</p>'
+            '<ul>'
+            '<li>Topic: HTML/CSS frontend basics</li>'
+            '<li>Multiple attempts allowed</li>'
+            '</ul>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Start Grading Exercise — HTML & CSS",
+            type="primary",
+            disabled=not can_start,
+            use_container_width=True,
+            key="go_exercise_html",
+        ):
+            _go_exercise("html_webpage_v1")
 
     st.divider()
     st.caption(
-        "Tip: bookmark `?mode=quiz` or `?mode=exercise` to jump straight to "
-        "either flow on your next visit."
+        "Tip: deep-link with `?mode=quiz`, "
+        "`?mode=exercise&task=coding_random_sampling_v1`, "
+        "`?mode=exercise&task=logic_dogs_v1`, or "
+        "`?mode=exercise&task=html_webpage_v1` to jump straight to a flow."
     )
 
 
@@ -985,7 +1156,9 @@ def main() -> None:
     if mode == "quiz":
         render_quiz()
     elif mode == "exercise":
-        render_exercise()
+        # Optional `?task=<task_id>` selects a specific grading task.
+        # Missing → first task (Part 2, the canonical PDF example).
+        render_exercise(st.query_params.get("task"))
     else:
         render_landing()
 
