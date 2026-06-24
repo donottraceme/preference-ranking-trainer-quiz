@@ -49,9 +49,10 @@ Tasks (in landing-page order):
                   text-align center on <header>. Tight, well-explained.
    - Response B : Works, but applies color: blue to <header> and relies
                   on inheritance; slightly less precise. No comments.
-   - Response C : Adds unrequested visual chrome (box-shadows, rounded
-                  corners, max-width) and leaks a stray "🤖️ Response C"
-                  marker at the top of the response.
+   - Response C : Adds unrequested visual chrome (background colors,
+                  box-shadows, rounded corners, max-width). All
+                  user-stated requirements are met but the response
+                  goes well beyond the brief.
 
 Order of A/B/C does NOT correlate with quality on purpose.
 """
@@ -632,8 +633,6 @@ appears in a paragraph tag below it.
             "id": "C",
             "label": "Response C",
             "markdown": """\
-🤖️ Response  C
-
 Here is the complete HTML and CSS code for your webpage. You can save
 this as an `.html` file (for example, `index.html`) and open it in any
 web browser.
