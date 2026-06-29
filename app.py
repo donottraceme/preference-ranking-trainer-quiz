@@ -22,6 +22,7 @@ Optional admin viewer (read local submissions):
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -33,6 +34,7 @@ from storage import (
     list_local_submissions,
     list_local_quiz_submissions,
     QUIZ_HEADER,
+    SUBMISSIONS_DIR,
 )
 from quiz import render_quiz, quiz_persistent_keys, REFERENCE_PDFS
 
@@ -245,6 +247,47 @@ def _reset_exercise_keep_identity() -> None:
 
 
 # -----------------------------------------------------------------------------
+# Quiz availability flags (admin-toggleable on/off switch per quiz)
+# -----------------------------------------------------------------------------
+# A tiny shared JSON file is the source of truth so an admin toggle applies to
+# every live session on this container (not just the admin's own). Default is
+# enabled: a missing file or key means the quiz is ON. Note: Streamlit Cloud's
+# disk is ephemeral, so flags reset to enabled on reboot/redeploy.
+QUIZ_TOGGLES: list[tuple[str, str]] = [
+    ("code", "Code & Math Quiz"),
+    ("general", "General-Purpose Quiz"),
+]
+# Grading exercises share the same on/off mechanism, keyed by task_id.
+EXERCISE_TOGGLES: list[tuple[str, str]] = [
+    ("coding_random_sampling_v1", "Grading Exercise — Random sampling"),
+    ("logic_dogs_v1", "Grading Exercise — Kennel logic"),
+    ("html_webpage_v1", "Grading Exercise — HTML & CSS"),
+]
+QUIZ_FLAGS_PATH = SUBMISSIONS_DIR / "quiz_flags.json"
+
+
+def _load_quiz_flags() -> dict[str, bool]:
+    try:
+        data = json.loads(QUIZ_FLAGS_PATH.read_text())
+        return {str(k): bool(v) for k, v in data.items()}
+    except Exception:  # noqa: BLE001 - missing/corrupt file fails open (enabled)
+        return {}
+
+
+def _quiz_enabled(key: str) -> bool:
+    return _load_quiz_flags().get(key, True)
+
+
+def _set_quiz_enabled(key: str, enabled: bool) -> None:
+    flags = _load_quiz_flags()
+    flags[key] = enabled
+    try:
+        QUIZ_FLAGS_PATH.write_text(json.dumps(flags))
+    except Exception:  # noqa: BLE001 - best-effort; ephemeral disk may reject
+        pass
+
+
+# -----------------------------------------------------------------------------
 # Admin viewer (?admin=1)
 # -----------------------------------------------------------------------------
 
@@ -293,11 +336,43 @@ ADMIN_EXERCISE_PARTS: list[tuple[str, str, str]] = [
 ]
 
 
+def _render_availability_rows(toggles: list[tuple[str, str]]) -> None:
+    for key, label in toggles:
+        enabled = _quiz_enabled(key)
+        col_status, col_btn = st.columns([3, 1])
+        with col_status:
+            status = "🟢 Enabled" if enabled else "🔴 Disabled"
+            st.markdown(f"**{label}** — {status}")
+        with col_btn:
+            btn_label = "Disable" if enabled else "Enable"
+            if st.button(btn_label, key=f"toggle_{key}",
+                         use_container_width=True):
+                _set_quiz_enabled(key, not enabled)
+                st.rerun()
+
+
+def _render_admin_quiz_availability() -> None:
+    """Per-quiz/exercise on/off switches. A flag applies to all live sessions."""
+    st.markdown("## Quiz & exercise availability")
+    st.caption(
+        "Turn a knowledge quiz or grading exercise on or off for everyone. "
+        'Disabled items show "disabled by admin" on the home screen and '
+        "can't be started. Note: flags reset to enabled if the app "
+        "reboots/redeploys."
+    )
+    st.markdown("**Knowledge quizzes**")
+    _render_availability_rows(QUIZ_TOGGLES)
+    st.markdown("**Grading exercises**")
+    _render_availability_rows(EXERCISE_TOGGLES)
+    st.divider()
+
+
 def render_admin() -> None:
     if not _admin_authorized():
         return
 
     st.title("Admin — Local Submissions on this container")
+    _render_admin_quiz_availability()
     st.caption(
         "⚠️ Streamlit Cloud's filesystem is **ephemeral** — local JSON files "
         "are wiped on every reboot/redeploy/idle-restart. Treat Google Sheets "
@@ -1044,6 +1119,11 @@ def render_landing() -> None:
         + "</p>"
     )
 
+    # Admin can switch either knowledge quiz off (see ?admin=1). When off, the
+    # card shows a notice and its Take button is disabled for everyone.
+    code_enabled = _quiz_enabled("code")
+    gen_enabled = _quiz_enabled("general")
+
     col_q, col_gq = st.columns(2, gap="large")
 
     with col_q:
@@ -1061,10 +1141,12 @@ def render_landing() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+        if not code_enabled:
+            st.warning("This quiz is disabled by admin.")
         if st.button(
             "Take the Code & Math Quiz",
             type="primary",
-            disabled=not can_start,
+            disabled=not can_start or not code_enabled,
             use_container_width=True,
             key="go_quiz",
         ):
@@ -1088,10 +1170,12 @@ def render_landing() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+        if not gen_enabled:
+            st.warning("This quiz is disabled by admin.")
         if st.button(
             "Take the General-Purpose Quiz",
             type="primary",
-            disabled=not can_start,
+            disabled=not can_start or not gen_enabled,
             use_container_width=True,
             key="go_quiz_general",
         ):
@@ -1103,6 +1187,12 @@ def render_landing() -> None:
     # Grading exercises — same UX, different task_id. Each button switches the
     # active task; per-task widget state is reset on entry so you start clean.
     st.markdown("### Grading exercises")
+
+    # Each exercise can be switched off independently from ?admin=1.
+    ex_random_enabled = _quiz_enabled("coding_random_sampling_v1")
+    ex_dogs_enabled = _quiz_enabled("logic_dogs_v1")
+    ex_html_enabled = _quiz_enabled("html_webpage_v1")
+
     col_e, col_p3 = st.columns(2, gap="large")
 
     with col_e:
@@ -1119,10 +1209,12 @@ def render_landing() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+        if not ex_random_enabled:
+            st.warning("This exercise is disabled by admin.")
         if st.button(
             "Start the Grading Exercise",
             type="primary",
-            disabled=not can_start,
+            disabled=not can_start or not ex_random_enabled,
             use_container_width=True,
             key="go_exercise",
         ):
@@ -1142,10 +1234,12 @@ def render_landing() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+        if not ex_dogs_enabled:
+            st.warning("This exercise is disabled by admin.")
         if st.button(
             "Start Grading Exercise — Kennel logic",
             type="primary",
-            disabled=not can_start,
+            disabled=not can_start or not ex_dogs_enabled,
             use_container_width=True,
             key="go_exercise_dogs",
         ):
@@ -1169,10 +1263,12 @@ def render_landing() -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+        if not ex_html_enabled:
+            st.warning("This exercise is disabled by admin.")
         if st.button(
             "Start Grading Exercise — HTML & CSS",
             type="primary",
-            disabled=not can_start,
+            disabled=not can_start or not ex_html_enabled,
             use_container_width=True,
             key="go_exercise_html",
         ):
@@ -1207,10 +1303,26 @@ def main() -> None:
         # Optional `?set=<code|general>` selects which quiz dataset to serve.
         # render_quiz() reads the `?set=` param itself, so the call signature
         # stays arg-free (kept stable to survive Streamlit Cloud hot-reloads).
+        # Block disabled quizzes reached via a saved deep link.
+        quiz_key = "general" if st.query_params.get("set") == "general" else "code"
+        if not _quiz_enabled(quiz_key):
+            st.warning("This quiz is disabled by admin.")
+            if st.button("← Back to home", key="back_home_disabled"):
+                st.query_params.clear()
+                st.rerun()
+            return
         render_quiz()
     elif mode == "exercise":
         # Optional `?task=<task_id>` selects a specific grading task.
         # Missing → first task (Part 2, the canonical PDF example).
+        # Block disabled exercises reached via a saved deep link.
+        ex_key = st.query_params.get("task") or "coding_random_sampling_v1"
+        if not _quiz_enabled(ex_key):
+            st.warning("This exercise is disabled by admin.")
+            if st.button("← Back to home", key="back_home_disabled_exercise"):
+                st.query_params.clear()
+                st.rerun()
+            return
         render_exercise(st.query_params.get("task"))
     else:
         render_landing()
