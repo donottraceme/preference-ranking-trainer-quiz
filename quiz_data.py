@@ -60,6 +60,7 @@ _TF_OPTIONS = [("true", "True"), ("false", "False")]
 
 
 QUIZ: dict = {
+    "quiz_id": "code_v3",
     "version": "v3",
     "max_points": 34,
     "blurb": (

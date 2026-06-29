@@ -361,10 +361,11 @@ def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
     import json as _json
     import zipfile
 
-    # CSV: column layout matches storage.QUIZ_HEADER (one row = one quiz).
+    # CSV: storage.QUIZ_HEADER (the sheet schema) plus a trailing quiz_id
+    # column so admins can tell the code and general-purpose quizzes apart.
     csv_buf = io.StringIO()
     writer = csv.writer(csv_buf)
-    writer.writerow(QUIZ_HEADER)
+    writer.writerow(list(QUIZ_HEADER) + ["quiz_id"])
     for r in rows:
         writer.writerow([
             r.get("submission_id", ""),
@@ -382,6 +383,7 @@ def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
                 },
                 ensure_ascii=False,
             ),
+            r.get("quiz_id", "") or "code_v3",
         ])
     csv_bytes = csv_buf.getvalue().encode("utf-8")
 
@@ -423,6 +425,7 @@ def _render_admin_quiz_section(rows: list[dict[str, Any]]) -> None:
             "timestamp_utc": r.get("timestamp_utc", ""),
             "trainer_name": r.get("trainer_name", ""),
             "trainer_email": r.get("trainer_email", ""),
+            "quiz": r.get("quiz_id", "") or "code_v3",
             "score": (
                 f"{r.get('total_score', '?')} / {r.get('max_score', '?')}"
             ),
@@ -1024,17 +1027,19 @@ def render_landing() -> None:
         st.query_params["task"] = task_id
         st.rerun()
 
-    st.markdown("### Choose a mode")
-    # Row 1 — Part 1 (Quiz) + Part 2 (canonical PDF random-sampling task)
-    col_q, col_e = st.columns(2, gap="large")
+    # Knowledge quizzes — the two independent quizzes sit side by side. They
+    # lock independently (per-email, per-quiz_id), so finishing one does not
+    # block the other.
+    st.markdown("### Knowledge quizzes")
+    col_q, col_gq = st.columns(2, gap="large")
 
     with col_q:
         st.markdown(
             '<div class="mode-card">'
-            '<h3>Part 1 · Knowledge Quiz</h3>'
-            '<p>29 multiple-choice and true/false items distilled from the '
-            'project guide. Click an option to lock it in and reveal the '
-            'correct answer + rule.</p>'
+            '<h3>Part 1 · Knowledge Quiz — Code &amp; Math</h3>'
+            '<p>29 multiple-choice and true/false items on code/math-eval '
+            'comprehension, distilled from the project guide. Click an option '
+            'to lock it in and reveal the correct answer + rule.</p>'
             '<ul>'
             '<li>One attempt per email (server-enforced)</li>'
             '<li>Inline reveal of correct answer after each click</li>'
@@ -1043,7 +1048,7 @@ def render_landing() -> None:
             unsafe_allow_html=True,
         )
         if st.button(
-            "Take the Knowledge Quiz",
+            "Take the Code & Math Quiz",
             type="primary",
             disabled=not can_start,
             use_container_width=True,
@@ -1052,6 +1057,38 @@ def render_landing() -> None:
             st.query_params.clear()
             st.query_params["mode"] = "quiz"
             st.rerun()
+
+    with col_gq:
+        st.markdown(
+            '<div class="mode-card">'
+            '<h3>Part 1B · Knowledge Quiz — General-Purpose</h3>'
+            '<p>31 items on <em>non</em>-code/math tasks: creative writing, '
+            'rewrite/restyle, brainstorming, role play, Q&amp;A-from-text, '
+            'summarization, and chit chat. Same click-to-lock + inline-reveal '
+            'format.</p>'
+            '<ul>'
+            '<li>Separate one-attempt-per-email lock from the Code &amp; Math quiz</li>'
+            '<li>Mirrors the real general-purpose certification tasks</li>'
+            '</ul>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Take the General-Purpose Quiz",
+            type="primary",
+            disabled=not can_start,
+            use_container_width=True,
+            key="go_quiz_general",
+        ):
+            st.query_params.clear()
+            st.query_params["mode"] = "quiz"
+            st.query_params["set"] = "general"
+            st.rerun()
+
+    # Grading exercises — same UX, different task_id. Each button switches the
+    # active task; per-task widget state is reset on entry so you start clean.
+    st.markdown("### Grading exercises")
+    col_e, col_p3 = st.columns(2, gap="large")
 
     with col_e:
         st.markdown(
@@ -1076,12 +1113,6 @@ def render_landing() -> None:
         ):
             _go_exercise("coding_random_sampling_v1")
 
-    # Row 2 — additional grading exercises (same UX as Part 2, different
-    # task_id). Each button switches the active task; per-task widget state
-    # is reset on entry so you start with a clean form.
-    st.markdown("")  # vertical breathing room between the two rows
-    col_p3, col_p4 = st.columns(2, gap="large")
-
     with col_p3:
         st.markdown(
             '<div class="mode-card">'
@@ -1104,6 +1135,9 @@ def render_landing() -> None:
             key="go_exercise_dogs",
         ):
             _go_exercise("logic_dogs_v1")
+
+    st.markdown("")  # vertical breathing room before the next exercise row
+    col_p4, _col_spacer = st.columns(2, gap="large")
 
     with col_p4:
         st.markdown(
@@ -1131,7 +1165,8 @@ def render_landing() -> None:
 
     st.divider()
     st.caption(
-        "Tip: deep-link with `?mode=quiz`, "
+        "Tip: deep-link with `?mode=quiz` (Code & Math), "
+        "`?mode=quiz&set=general` (General-Purpose), "
         "`?mode=exercise&task=coding_random_sampling_v1`, "
         "`?mode=exercise&task=logic_dogs_v1`, or "
         "`?mode=exercise&task=html_webpage_v1` to jump straight to a flow."
@@ -1154,7 +1189,9 @@ def main() -> None:
 
     mode = st.query_params.get("mode", "")
     if mode == "quiz":
-        render_quiz()
+        # Optional `?set=<code|general>` selects which quiz dataset to serve.
+        # Missing / unknown → the code/math quiz (default).
+        render_quiz(st.query_params.get("set"))
     elif mode == "exercise":
         # Optional `?task=<task_id>` selects a specific grading task.
         # Missing → first task (Part 2, the canonical PDF example).

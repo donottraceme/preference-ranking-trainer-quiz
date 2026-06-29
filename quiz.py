@@ -1,24 +1,33 @@
 """
-Quiz module — the "Part 1" knowledge quiz, paired with the exercise mode in
+Quiz module — the "Part 1" knowledge quizzes, paired with the exercise mode in
 `app.py`.
 
-Behavior (Option B from the plan):
+Two independent quiz datasets are served through this one UI engine:
+  - `code`    → `quiz_data.py`         (code/math eval comprehension, code_v3)
+  - `general` → `quiz_data_general.py` (general-purpose tasks, general_v1)
+
+The active dataset is chosen by the `?set=` query param (default: `code`).
+Every per-question and scalar session key is namespaced by the dataset's
+`quiz_id`, and the per-email completion lock is queried/saved per `quiz_id`, so
+the two quizzes never collide — a trainer can complete both, each locked
+independently.
+
+Behavior (per dataset):
   - Trainer enters name + email on the landing page (in `app.py`).
-  - On entering the quiz, we GET the trainer's quiz status by email. If a
-    completed row already exists, we show the prior score read-only and refuse
-    to restart (the per-email completion lock).
+  - On entering a quiz, we GET the trainer's quiz status by email + quiz_id. If
+    a completed row already exists, we show the prior score read-only and refuse
+    to restart (the per-email/per-quiz completion lock).
   - Each question is a radio with `index=None`; on first click we capture the
     answer, mark the question locked, and immediately reveal the correct
-    answer + rule. A locked radio is rendered with `disabled=True` so the
-    trainer can't change their pick.
-  - When every question has been answered, "Finish quiz" submits to the
+    answer + rule. A locked radio is rendered with `disabled=True`.
+  - When every question has been answered, "Submit" persists to the
     `QuizSubmissions` sheet (via the same webhook backend) and the lock
     activates server-side.
 
-Streamlit state model:
-  - q{id}_radio    — the radio widget's bound key (the option_id selected)
-  - q{id}_answer   — the captured option_id; written ONCE on first click
-  - q{id}_locked   — True once the trainer has answered
+Streamlit state model (all namespaced by quiz_id):
+  - q_{quiz_id}_{qid}_radio    — the radio widget's bound key (option_id)
+  - q_{quiz_id}_{qid}_answer   — the captured option_id; written ONCE
+  - q_{quiz_id}_{qid}_locked   — True once the trainer has answered
 
 These are appended to PERSISTENT_KEYS in `app.py` so they survive reruns.
 """
@@ -30,7 +39,8 @@ from typing import Any
 
 import streamlit as st
 
-from quiz_data import QUIZ, iter_questions
+import quiz_data
+import quiz_data_general
 from storage import save_quiz_submission, quiz_status_for_email
 
 
@@ -38,29 +48,74 @@ UNSELECTED = None  # st.radio uses None as the "nothing picked yet" sentinel.
 
 
 # -----------------------------------------------------------------------------
-# Session keys
+# Dataset registry
 # -----------------------------------------------------------------------------
 
+# Maps the `?set=` query param value to its dataset module.
+_QUIZ_SETS: dict[str, Any] = {
+    "code": quiz_data,
+    "general": quiz_data_general,
+}
+_DEFAULT_SET = "code"
+
+# Human-readable banner labels per set.
+_SET_LABELS: dict[str, str] = {
+    "code": "Code & Math",
+    "general": "General-Purpose",
+}
+
+
+def _resolve_set(set_name: str | None) -> str:
+    """Return a valid set key, defaulting to the code quiz for unknown values."""
+    return set_name if set_name in _QUIZ_SETS else _DEFAULT_SET
+
+
+def _module_for(set_name: str) -> Any:
+    return _QUIZ_SETS[_resolve_set(set_name)]
+
+
+# -----------------------------------------------------------------------------
+# Session keys (namespaced by quiz_id)
+# -----------------------------------------------------------------------------
+
+_SCALAR_NAMES = (
+    "started_at",
+    "submitted",
+    "submission_id",
+    "submission_msg",
+    "final_score",
+    "status_checked_for",   # email we've already checked the server for
+    "prior_completion",     # dict | None — set if server returned a completed row
+)
+
+
+def _qid(mod: Any) -> str:
+    # Fallback keeps older datasets (without an explicit quiz_id) working.
+    return mod.QUIZ.get("quiz_id", "code_v3")
+
+
+def _qkey(mod: Any, question_id: str, suffix: str) -> str:
+    return f"q_{_qid(mod)}_{question_id}_{suffix}"
+
+
+def _skey(mod: Any, name: str) -> str:
+    return f"quiz_{_qid(mod)}_{name}"
+
+
 def quiz_persistent_keys() -> list[str]:
-    """Every quiz widget/state key that must survive Streamlit reruns.
+    """Every quiz widget/state key (across BOTH datasets) that must survive reruns.
 
     Imported by app.py so the top-level `_persist_widget_state()` helper can
     re-bind these on every rerun, even when the quiz module isn't rendering.
     """
     keys: list[str] = []
-    for _, q in iter_questions():
-        keys.append(f"q{q['id']}_radio")
-        keys.append(f"q{q['id']}_answer")
-        keys.append(f"q{q['id']}_locked")
-    keys += [
-        "quiz_started_at",
-        "quiz_submitted",
-        "quiz_submission_id",
-        "quiz_submission_msg",
-        "quiz_final_score",
-        "quiz_status_checked_for",  # email we've already checked the server for
-        "quiz_prior_completion",    # dict | None — set if server returned a completed row
-    ]
+    for mod in _QUIZ_SETS.values():
+        for _, q in mod.iter_questions():
+            keys.append(_qkey(mod, q["id"], "radio"))
+            keys.append(_qkey(mod, q["id"], "answer"))
+            keys.append(_qkey(mod, q["id"], "locked"))
+        for name in _SCALAR_NAMES:
+            keys.append(_skey(mod, name))
     return keys
 
 
@@ -68,14 +123,14 @@ def quiz_persistent_keys() -> list[str]:
 # Helpers
 # -----------------------------------------------------------------------------
 
-def _question_locked(q: dict) -> bool:
-    return bool(st.session_state.get(f"q{q['id']}_locked", False))
+def _question_locked(mod: Any, q: dict) -> bool:
+    return bool(st.session_state.get(_qkey(mod, q["id"], "locked"), False))
 
 
-def _question_correct(q: dict) -> bool | None:
-    if not _question_locked(q):
+def _question_correct(mod: Any, q: dict) -> bool | None:
+    if not _question_locked(mod, q):
         return None
-    return st.session_state.get(f"q{q['id']}_answer") == q["correct"]
+    return st.session_state.get(_qkey(mod, q["id"], "answer")) == q["correct"]
 
 
 def _label_for(q: dict, option_id: str) -> str:
@@ -85,46 +140,52 @@ def _label_for(q: dict, option_id: str) -> str:
     return option_id
 
 
-def _answered_count() -> int:
-    return sum(1 for _, q in iter_questions() if _question_locked(q))
+def _answered_count(mod: Any) -> int:
+    return sum(1 for _, q in mod.iter_questions() if _question_locked(mod, q))
 
 
-def _score() -> int:
-    return sum(q["points"] for _, q in iter_questions() if _question_correct(q))
+def _score(mod: Any) -> int:
+    return sum(
+        q["points"] for _, q in mod.iter_questions() if _question_correct(mod, q)
+    )
 
 
-def _all_answered() -> bool:
-    return _answered_count() == sum(1 for _ in iter_questions())
+def _total_items(mod: Any) -> int:
+    return sum(1 for _ in mod.iter_questions())
 
 
-def _block_progress(block: dict) -> tuple[int, int]:
-    answered = sum(1 for q in block["questions"] if _question_locked(q))
+def _all_answered(mod: Any) -> bool:
+    return _answered_count(mod) == _total_items(mod)
+
+
+def _block_progress(mod: Any, block: dict) -> tuple[int, int]:
+    answered = sum(1 for q in block["questions"] if _question_locked(mod, q))
     return answered, len(block["questions"])
 
 
-def _reset_quiz_state() -> None:
-    """Clear every per-question key + start a fresh timer."""
-    for _, q in iter_questions():
+def _reset_quiz_state(mod: Any) -> None:
+    """Clear every per-question key + start a fresh timer (for this dataset)."""
+    for _, q in mod.iter_questions():
         for suffix in ("radio", "answer", "locked"):
-            st.session_state.pop(f"q{q['id']}_{suffix}", None)
-    for k in (
-        "quiz_submitted",
-        "quiz_submission_id",
-        "quiz_submission_msg",
-        "quiz_final_score",
-        "quiz_status_checked_for",
-        "quiz_prior_completion",
+            st.session_state.pop(_qkey(mod, q["id"], suffix), None)
+    for name in (
+        "submitted",
+        "submission_id",
+        "submission_msg",
+        "final_score",
+        "status_checked_for",
+        "prior_completion",
     ):
-        st.session_state.pop(k, None)
-    st.session_state.quiz_started_at = time.time()
+        st.session_state.pop(_skey(mod, name), None)
+    st.session_state[_skey(mod, "started_at")] = time.time()
 
 
 # -----------------------------------------------------------------------------
 # Per-question card
 # -----------------------------------------------------------------------------
 
-def _render_question(q: dict, index_in_block: int) -> None:
-    locked = _question_locked(q)
+def _render_question(mod: Any, q: dict, index_in_block: int) -> None:
+    locked = _question_locked(mod, q)
     qid = q["id"]
     points = q["points"]
     points_label = "2 pts" if points == 2 else "1 pt"
@@ -137,26 +198,30 @@ def _render_question(q: dict, index_in_block: int) -> None:
     options_ids = [oid for oid, _ in q["options"]]
     options_labels = {oid: label for oid, label in q["options"]}
 
+    radio_key = _qkey(mod, qid, "radio")
+    answer_key = _qkey(mod, qid, "answer")
+    locked_key = _qkey(mod, qid, "locked")
+
     selected_id = st.radio(
         label=f"Answer for {qid}",
         options=options_ids,
         index=None,
         format_func=lambda oid: options_labels[oid],
-        key=f"q{qid}_radio",
+        key=radio_key,
         disabled=locked,
         label_visibility="collapsed",
     )
 
-    # Capture-on-first-click. The radio's bound key is q{qid}_radio; we copy
-    # to q{qid}_answer once and never overwrite it, so even if Streamlit
+    # Capture-on-first-click. The radio's bound key is radio_key; we copy
+    # to answer_key once and never overwrite it, so even if Streamlit
     # rebinds the radio later the canonical answer survives.
     if selected_id is not None and not locked:
-        st.session_state[f"q{qid}_answer"] = selected_id
-        st.session_state[f"q{qid}_locked"] = True
+        st.session_state[answer_key] = selected_id
+        st.session_state[locked_key] = True
         st.rerun()
 
     if locked:
-        chosen = st.session_state.get(f"q{qid}_answer")
+        chosen = st.session_state.get(answer_key)
         correct = q["correct"]
         is_right = chosen == correct
         header = (
@@ -181,13 +246,13 @@ def _render_question(q: dict, index_in_block: int) -> None:
 # Sidebar
 # -----------------------------------------------------------------------------
 
-def _render_sidebar() -> None:
+def _render_sidebar(mod: Any) -> None:
     st.sidebar.header("Quiz progress")
 
-    answered = _answered_count()
-    total = sum(1 for _ in iter_questions())
-    score = _score()
-    max_points = QUIZ["max_points"]
+    answered = _answered_count(mod)
+    total = _total_items(mod)
+    score = _score(mod)
+    max_points = mod.QUIZ["max_points"]
 
     st.sidebar.markdown(f"**Answered:** {answered} / {total}")
     st.sidebar.progress(answered / total if total else 0.0)
@@ -195,8 +260,8 @@ def _render_sidebar() -> None:
 
     st.sidebar.divider()
     st.sidebar.markdown("**Per-block progress**")
-    for block in QUIZ["blocks"]:
-        done, n = _block_progress(block)
+    for block in mod.QUIZ["blocks"]:
+        done, n = _block_progress(mod, block)
         marker = "✅" if done == n else ("▶︎" if done > 0 else "◯")
         st.sidebar.markdown(
             f"{marker} &nbsp; **{block['id']}** &nbsp; {done}/{n}",
@@ -228,7 +293,7 @@ def _show_prior_completion(prior: dict) -> None:
         f"**Submitted:** {ts or '—'}"
     )
     st.info(
-        "Each trainer can take the quiz once. If you genuinely need a "
+        "Each trainer can take this quiz once. If you genuinely need a "
         "retake, ask the project lead to delete your row from the "
         "`QuizSubmissions` sheet."
     )
@@ -246,20 +311,21 @@ def _show_prior_completion(prior: dict) -> None:
 # Submit
 # -----------------------------------------------------------------------------
 
-def _build_payload() -> dict[str, Any]:
+def _build_payload(mod: Any) -> dict[str, Any]:
     answers: dict[str, str] = {}
     correctness: dict[str, bool] = {}
-    for _, q in iter_questions():
-        ans = st.session_state.get(f"q{q['id']}_answer", "")
+    for _, q in mod.iter_questions():
+        ans = st.session_state.get(_qkey(mod, q["id"], "answer"), "")
         answers[q["id"]] = ans
         correctness[q["id"]] = (ans == q["correct"])
 
-    score = _score()
-    max_points = QUIZ["max_points"]
-    started = st.session_state.get("quiz_started_at", time.time())
+    score = _score(mod)
+    max_points = mod.QUIZ["max_points"]
+    started = st.session_state.get(_skey(mod, "started_at"), time.time())
     return {
         "type": "quiz",
-        "quiz_version": QUIZ["version"],
+        "quiz_id": _qid(mod),
+        "quiz_version": mod.QUIZ["version"],
         "trainer_name": st.session_state.get("trainer_name", "").strip(),
         "trainer_email": st.session_state.get("trainer_email", "").strip(),
         "total_score": score,
@@ -270,10 +336,10 @@ def _build_payload() -> dict[str, Any]:
     }
 
 
-def _render_submit_section() -> None:
+def _render_submit_section(mod: Any) -> None:
     st.markdown("## Finish quiz")
-    answered = _answered_count()
-    total = sum(1 for _ in iter_questions())
+    answered = _answered_count(mod)
+    total = _total_items(mod)
 
     if answered < total:
         st.warning(
@@ -292,17 +358,17 @@ def _render_submit_section() -> None:
             "Submitting… this can take a few seconds while we save to "
             "Google Sheets."
         ):
-            ok, msg, sid = save_quiz_submission(_build_payload())
+            ok, msg, sid = save_quiz_submission(_build_payload(mod))
         if ok:
-            st.session_state.quiz_submitted = True
-            st.session_state.quiz_submission_id = sid
-            st.session_state.quiz_submission_msg = msg
+            st.session_state[_skey(mod, "submitted")] = True
+            st.session_state[_skey(mod, "submission_id")] = sid
+            st.session_state[_skey(mod, "submission_msg")] = msg
             st.rerun()
         else:
             st.error(f"Submission failed: {msg}")
 
 
-def _render_post_submit() -> None:
+def _render_post_submit(mod: Any) -> None:
     """Mirrors the exercise's post-submit view in app.py — neutral and brief.
 
     The score, pass/fail status, and per-question correctness are deliberately
@@ -312,15 +378,15 @@ def _render_post_submit() -> None:
     """
     st.success("✅ Submitted successfully!")
     st.markdown(
-        f"**Submission ID:** `{st.session_state.get('quiz_submission_id', '')}`"
+        f"**Submission ID:** `{st.session_state.get(_skey(mod, 'submission_id'), '')}`"
     )
-    st.caption(st.session_state.get("quiz_submission_msg", ""))
+    st.caption(st.session_state.get(_skey(mod, "submission_msg"), ""))
     st.balloons()
 
     st.divider()
     st.markdown("### Done")
     st.write(
-        "Your responses are saved in the project's Google Sheet. The quiz "
+        "Your responses are saved in the project's Google Sheet. This quiz "
         "is now locked for this email; ask the project lead if you need a "
         "genuine retake."
     )
@@ -348,8 +414,12 @@ def _is_valid_turing_email(email: str) -> bool:
     return e.endswith("@turing.com") and len(e) > len("@turing.com")
 
 
-def render_quiz() -> None:
-    """Entry point called from app.py when `?mode=quiz`."""
+def render_quiz(set_name: str | None = None) -> None:
+    """Entry point called from app.py when `?mode=quiz` (optionally `&set=`)."""
+    active_set = _resolve_set(set_name)
+    mod = _module_for(active_set)
+    label = _SET_LABELS.get(active_set, active_set)
+
     email = (st.session_state.get("trainer_email") or "").strip()
     name = (st.session_state.get("trainer_name") or "").strip()
     if not name or not email or not _is_valid_turing_email(email):
@@ -362,45 +432,50 @@ def render_quiz() -> None:
             st.rerun()
         return
 
-    if "quiz_started_at" not in st.session_state:
-        st.session_state.quiz_started_at = time.time()
+    started_key = _skey(mod, "started_at")
+    if started_key not in st.session_state:
+        st.session_state[started_key] = time.time()
 
     st.markdown(
-        '<div class="top-banner">Knowledge Quiz — Preference Ranking v3</div>',
+        f'<div class="top-banner">Knowledge Quiz — {label} '
+        f'(Preference Ranking)</div>',
         unsafe_allow_html=True,
     )
-    st.markdown(QUIZ["blurb"])
+    st.markdown(mod.QUIZ["blurb"])
     st.caption(
         f"Trainer: **{name}** · {email} · "
-        f"Quiz version **{QUIZ['version']}** · {QUIZ['max_points']} points total"
+        f"Quiz version **{mod.QUIZ['version']}** · "
+        f"{mod.QUIZ['max_points']} points total"
     )
 
-    # ---- one-time per-email lock check ---------------------------------------
+    # ---- one-time per-email/per-quiz lock check ------------------------------
     # Only call the backend once per email per session — repeated calls would
     # rerun on every radio click and burn quota.
-    if st.session_state.get("quiz_status_checked_for") != email:
-        prior = quiz_status_for_email(email)
-        st.session_state.quiz_status_checked_for = email
-        st.session_state.quiz_prior_completion = (
+    status_checked_key = _skey(mod, "status_checked_for")
+    prior_key = _skey(mod, "prior_completion")
+    if st.session_state.get(status_checked_key) != email:
+        prior = quiz_status_for_email(email, _qid(mod))
+        st.session_state[status_checked_key] = email
+        st.session_state[prior_key] = (
             prior if (prior and prior.get("completed")) else None
         )
 
-    if st.session_state.get("quiz_prior_completion"):
-        _render_sidebar()
-        _show_prior_completion(st.session_state["quiz_prior_completion"])
+    if st.session_state.get(prior_key):
+        _render_sidebar(mod)
+        _show_prior_completion(st.session_state[prior_key])
         return
 
     # ---- post-submit view ----------------------------------------------------
-    if st.session_state.get("quiz_submitted"):
-        _render_sidebar()
-        _render_post_submit()
+    if st.session_state.get(_skey(mod, "submitted")):
+        _render_sidebar(mod)
+        _render_post_submit(mod)
         return
 
     # ---- main quiz UI --------------------------------------------------------
-    _render_sidebar()
+    _render_sidebar(mod)
 
-    for block in QUIZ["blocks"]:
-        done, n = _block_progress(block)
+    for block in mod.QUIZ["blocks"]:
+        done, n = _block_progress(mod, block)
         with st.expander(
             f"{block['title']}  &nbsp; ({done}/{n})",
             expanded=True,
@@ -408,6 +483,6 @@ def render_quiz() -> None:
             if block.get("intro"):
                 st.caption(block["intro"])
             for i, q in enumerate(block["questions"], start=1):
-                _render_question(q, i)
+                _render_question(mod, q, i)
 
-    _render_submit_section()
+    _render_submit_section(mod)

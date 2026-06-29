@@ -195,6 +195,12 @@ QUIZ_HEADER: list[str] = [
     "answers_json",
 ]
 
+# Payloads / rows with a blank quiz_id belong to the original code/math quiz.
+# The general-purpose quiz uses its own quiz_id + its own sheet/action so the
+# original code quiz flow is never touched.
+DEFAULT_QUIZ_ID = "code_v3"
+GENERAL_QUIZ_ID = "general_v1"
+
 
 def _flatten_quiz_for_sheet(payload: dict[str, Any]) -> list[Any]:
     return [
@@ -336,8 +342,9 @@ def save_quiz_submission(payload: dict[str, Any]) -> tuple[bool, str, str]:
 
     Same priority chain as `save_submission`: local backup first (always),
     then webhook, then Sheets API, then local-only. The payload's `type` field
-    is forced to "quiz" so the Apps Script handler can route to the
-    `QuizSubmissions` sheet.
+    is forced to "quiz"; the Apps Script handler routes by `quiz_id` (the
+    general-purpose quiz lands in its own `QuizSubmissionsGeneral` sheet, the
+    code quiz in the original `QuizSubmissions` sheet).
     """
     submission_id = payload.get("submission_id") or str(uuid.uuid4())
     payload = {
@@ -350,6 +357,8 @@ def save_quiz_submission(payload: dict[str, Any]) -> tuple[bool, str, str]:
 
     _write_local_quiz(payload)
 
+    is_general = (payload.get("quiz_id") or DEFAULT_QUIZ_ID).strip() == GENERAL_QUIZ_ID
+
     webhook = _webhook_url()
     if webhook:
         ok, info = _post_to_webhook(webhook, payload)
@@ -360,7 +369,9 @@ def save_quiz_submission(payload: dict[str, Any]) -> tuple[bool, str, str]:
             "Your quiz lock will not be enforced until the row reaches the sheet."
         ), submission_id
 
-    worksheet, sheets_ok = _quiz_sheets_client()
+    # Sheets-API fallback: general quiz uses its own worksheet so the code
+    # quiz's worksheet is never written to by the general quiz.
+    worksheet, sheets_ok = _quiz_sheets_client(general=is_general)
     if sheets_ok:
         try:
             worksheet.append_row(
@@ -377,12 +388,19 @@ def save_quiz_submission(payload: dict[str, Any]) -> tuple[bool, str, str]:
     return True, "Saved quiz score locally (no remote backend configured).", submission_id
 
 
-def quiz_status_for_email(email: str) -> dict[str, Any] | None:
-    """Return prior completed-quiz record for this email, or None.
+def quiz_status_for_email(
+    email: str, quiz_id: str | None = None
+) -> dict[str, Any] | None:
+    """Return prior completed-quiz record for this email + quiz_id, or None.
+
+    The lock is namespaced by `quiz_id` so a trainer who finished the code
+    quiz is not blocked from the general-purpose quiz (and vice versa). A
+    blank/None quiz_id defaults to the original code quiz for backward compat.
 
     Resolution order matches `save_quiz_submission`:
-      1. Webhook (GET `?action=quiz_status&email=...`).
-      2. Local JSON backups in submissions/quiz_*.json.
+      1. Webhook GET — `?action=quiz_status` for the code quiz, or
+         `?action=quiz_status_general` for the general-purpose quiz.
+      2. Local JSON backups in submissions/quiz_*.json (filtered by quiz_id).
 
     Returning None means "no prior completion found OR we couldn't reach the
     server". `quiz.py` treats None as "let the trainer proceed"; the lock will
@@ -391,10 +409,11 @@ def quiz_status_for_email(email: str) -> dict[str, Any] | None:
     email = (email or "").strip().lower()
     if not email:
         return None
+    quiz_id = (quiz_id or DEFAULT_QUIZ_ID).strip()
 
     webhook = _webhook_url()
     if webhook:
-        record = _get_quiz_status_from_webhook(webhook, email)
+        record = _get_quiz_status_from_webhook(webhook, email, quiz_id)
         if record is not None:
             return record
         # Webhook reachable but didn't return useful data — fall through to
@@ -402,20 +421,29 @@ def quiz_status_for_email(email: str) -> dict[str, Any] | None:
 
     # Fallback: scan local JSON backups (only useful for single-machine runs).
     for row in list_local_quiz_submissions():
-        if (row.get("trainer_email") or "").strip().lower() == email:
-            return {
-                "completed": True,
-                "score": row.get("total_score"),
-                "max_score": row.get("max_score"),
-                "timestamp": row.get("timestamp_utc"),
-                "trainer_name": row.get("trainer_name"),
-                "answers": row.get("answers"),
-            }
+        if (row.get("trainer_email") or "").strip().lower() != email:
+            continue
+        row_quiz_id = (row.get("quiz_id") or DEFAULT_QUIZ_ID).strip()
+        if row_quiz_id != quiz_id:
+            continue
+        return {
+            "completed": True,
+            "score": row.get("total_score"),
+            "max_score": row.get("max_score"),
+            "timestamp": row.get("timestamp_utc"),
+            "trainer_name": row.get("trainer_name"),
+            "answers": row.get("answers"),
+        }
     return None
 
 
-def _get_quiz_status_from_webhook(url: str, email: str) -> dict[str, Any] | None:
+def _get_quiz_status_from_webhook(
+    url: str, email: str, quiz_id: str
+) -> dict[str, Any] | None:
     """Issue a GET to the Apps Script web-app and return the parsed JSON.
+
+    The general-purpose quiz uses a dedicated `quiz_status_general` action so
+    the original `quiz_status` action (code quiz) is left untouched.
 
     The Apps Script handler responds with:
       { "completed": false }                — no row found
@@ -424,7 +452,10 @@ def _get_quiz_status_from_webhook(url: str, email: str) -> dict[str, Any] | None
     Returns None on any transport / parse error so the caller can decide what
     to do.
     """
-    query = urllib.parse.urlencode({"action": "quiz_status", "email": email})
+    action = (
+        "quiz_status_general" if quiz_id == GENERAL_QUIZ_ID else "quiz_status"
+    )
+    query = urllib.parse.urlencode({"action": action, "email": email})
     full = f"{url}?{query}"
     req = urllib.request.Request(full, method="GET")
     try:
@@ -458,12 +489,14 @@ def _get_quiz_status_from_webhook(url: str, email: str) -> dict[str, Any] | None
     return parsed
 
 
-def _quiz_sheets_client():
-    """Return a (worksheet, available) pair for the QuizSubmissions tab.
+def _quiz_sheets_client(general: bool = False):
+    """Return a (worksheet, available) pair for a quiz tab.
 
-    Reuses the same service-account credentials as `_sheets_client()` but
-    targets a separate worksheet (configurable via secrets:
-    `sheet.quiz_worksheet`, defaulting to "QuizSubmissions").
+    Reuses the same service-account credentials as `_sheets_client()`. The code
+    quiz targets `sheet.quiz_worksheet` (default "QuizSubmissions"); the
+    general-purpose quiz targets `sheet.quiz_worksheet_general` (default
+    "QuizSubmissionsGeneral") so the original quiz worksheet is never written
+    to by the general quiz.
     """
     try:
         import gspread
@@ -484,7 +517,14 @@ def _quiz_sheets_client():
         )
         client = gspread.authorize(creds)
         sheet_key = st.secrets["sheet"]["key"]
-        worksheet_name = st.secrets["sheet"].get("quiz_worksheet", "QuizSubmissions")
+        if general:
+            worksheet_name = st.secrets["sheet"].get(
+                "quiz_worksheet_general", "QuizSubmissionsGeneral"
+            )
+        else:
+            worksheet_name = st.secrets["sheet"].get(
+                "quiz_worksheet", "QuizSubmissions"
+            )
         spreadsheet = client.open_by_key(sheet_key)
         try:
             worksheet = spreadsheet.worksheet(worksheet_name)
