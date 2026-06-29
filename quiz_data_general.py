@@ -77,7 +77,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — do not skip.**  \n"
-                        "**Rule (§3.3 Expertise Mismatch):** the skip applies "
+                        "**Rule (§1.1 Expertise Mismatch):** the skip applies "
                         "to tasks like math/legal proofs you *\"can't "
                         "confidently rate even after thorough research\"* "
                         "(~10 min budget). A stylistic rewrite is a normal "
@@ -103,7 +103,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — do not skip.**  \n"
-                        "**Rule (§3.3 Gibberish — Don't skip):** the guide "
+                        "**Rule (§1.1 Gibberish — Don't skip):** the guide "
                         "lists the *\"Hempmas\"* case explicitly under "
                         "*\"knowingly made-up\"* — that is NOT gibberish. "
                         "Gibberish is text with no coherent meaning "
@@ -126,7 +126,7 @@ QUIZ: dict = {
                     "correct": "true",
                     "rule": (
                         "**Answer: True.**  \n"
-                        "**Rule (§3.3 Language):** a prompt in a language "
+                        "**Rule (§1.1 Language):** a prompt in a language "
                         "outside your locale is a valid skip; but *\"translation "
                         "requests\"* (e.g. *\"translate 'Cómo está usted' to "
                         "English\"*) are explicitly **don't skip**. Never skip "
@@ -162,7 +162,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Partially Following.**  \n"
-                        "**Rule (§4.1):** most instructions were obeyed (the "
+                        "**Rule (§2.1 Following Instructions):** most instructions were obeyed (the "
                         "passage was rewritten in contemporary English) but an "
                         "explicit style constraint (*no slang / Gen Z*) was "
                         "not — the textbook *\"most but not all instructions "
@@ -189,7 +189,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Partially Following.**  \n"
-                        "**Rule (§4.1):** the prompt has two explicit "
+                        "**Rule (§2.1 Following Instructions):** the prompt has two explicit "
                         "deliverables (rewrite + story beat). One was fully "
                         "done, the other omitted → most-but-not-all = "
                         "Partially Following. (A missing requested section "
@@ -217,7 +217,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Not Following.**  \n"
-                        "**Rule (§4.1):** for a role-play request the "
+                        "**Rule (§2.1 Following Instructions):** for a role-play request the "
                         "in-character persona IS the main instruction. "
                         "Dropping it for the entire reply = *\"main "
                         "instructions ignored\"* → Not Following, even though "
@@ -242,7 +242,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Partially Following.**  \n"
-                        "**Rule (§4.1 scale):** *\"some deviations… extra "
+                        "**Rule (§2.1 Following Instructions scale):** *\"some deviations… extra "
                         "info added\"* → Partially Following. An explicit count "
                         "is an instruction; exceeding it (3 asked, 7 given) is "
                         "a deviation, not full compliance."
@@ -267,7 +267,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Partially Following.**  \n"
-                        "**Rule (§4.1):** the explicit structural "
+                        "**Rule (§2.1 Following Instructions):** the explicit structural "
                         "requirement (four stanzas) is a format instruction. "
                         "The poem follows topic + form but misses the stanza "
                         "count → most-but-not-all = Partially Following."
@@ -301,7 +301,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Bad, could have been made shorter.**  \n"
-                        "**Rule (§4.3, Case 1):** an explicit length "
+                        "**Rule (§2.1 Concision, Case 1):** an explicit length "
                         "restriction (*two lines*) was given and badly "
                         "exceeded (three paragraphs). When Bad/Acceptable you "
                         "**must** also pick \"shorter\" or \"longer\"."
@@ -326,7 +326,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Bad, could have been made shorter.**  \n"
-                        "**Rule (§4.3, Distractions):** *\"excess jargon, "
+                        "**Rule (§2.1 Concision, Distractions):** *\"excess jargon, "
                         "excessive background, filler\"* derail the answer. A "
                         "casual greeting needs a brief, friendly reply; a "
                         "200-word essay is a pile of distractions."
@@ -347,7 +347,7 @@ QUIZ: dict = {
                     "correct": "false",
                     "rule": (
                         "**Answer: False.**  \n"
-                        "**Rule (§4.3, Case 2):** with no explicit length, "
+                        "**Rule (§2.1 Concision, Case 2):** with no explicit length, "
                         "*\"long or short is fine if it fits the need\"*. "
                         "Length alone is not the rating — judge distractions "
                         "and fit, not raw word count."
@@ -372,10 +372,10 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Good.**  \n"
-                        "**Rule (§4.3, Case 1):** *\"Even a 500-word "
+                        "**Rule (§2.1 Concision, Case 1):** *\"Even a 500-word "
                         "response is concise if the user asked for it.\"* Once "
                         "*\"in detail\"* is requested, Concision judges "
-                        "word-quality, not word-count. (And §4.3: do NOT "
+                        "word-quality, not word-count. (And §2.1 Concision: do NOT "
                         "penalize based on the other response's length.)"
                     ),
                 },
@@ -407,7 +407,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Truthful.**  \n"
-                        "**Rule (§4.4, Accuracy does NOT apply):** "
+                        "**Rule (§2.1 Truthfulness, Accuracy does NOT apply):** "
                         "*\"Fictional creative writing (poems, stories…)\"* is "
                         "always Truthful. There is no real-world claim to "
                         "verify."
@@ -434,7 +434,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Not Truthful.**  \n"
-                        "**Rule (§4.4, Contextual):** for "
+                        "**Rule (§2.1 Truthfulness, Contextual):** for "
                         "summarize/rewrite/Q&A-from-text, the response *\"must "
                         "come from the supplied text. Adding outside info "
                         "(even if factually true) makes it Not Truthful.\"*"
@@ -460,7 +460,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Not Truthful.**  \n"
-                        "**Rule (§4.4, Accuracy applies):** *\"Non-fiction "
+                        "**Rule (§2.1 Truthfulness, Accuracy applies):** *\"Non-fiction "
                         "creative writing is still subject to accuracy — a "
                         "Reddit post telling people to put out electric fires "
                         "with water is NOT truthful.\"* Same logic for grease "
@@ -487,7 +487,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Partially Truthful.**  \n"
-                        "**Rule (§4.4 scale + Primary vs Secondary):** "
+                        "**Rule (§2.1 Truthfulness scale + Primary vs Secondary):** "
                         "*\"primary info correct, secondary info wrong\"* → "
                         "Partially Truthful. The thesis (primary) is right; a "
                         "misstated supporting statistic (secondary) is the "
@@ -513,7 +513,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — Not Truthful.**  \n"
-                        "**Rule (§4.4, Time-sensitive):** *\"assume 'now' — "
+                        "**Rule (§2.1 Truthfulness, Time-sensitive):** *\"assume 'now' — "
                         "outdated info… is Not Truthful.\"* A monarch/leader "
                         "question is time-sensitive; the response must be "
                         "accurate as of today."
@@ -548,7 +548,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Slightly Satisfying.**  \n"
-                        "**Rule (§4.5, Special Considerations):** "
+                        "**Rule (§2.1 Satisfaction, Special Considerations):** "
                         "*\"Ambiguous/missing-context request: ideal response "
                         "= ask for clarification = Slightly Satisfying.\"* "
                         "Guessing the role/company would be worse."
@@ -574,7 +574,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Slightly or Highly Satisfying.**  \n"
-                        "**Rule (§4.5, Offensive/Dangerous):** *\"REWARD "
+                        "**Rule (§2.1 Satisfaction, Offensive/Dangerous):** *\"REWARD "
                         "refusal — can be Slightly or even Highly "
                         "Satisfying.\"* Helpful disengagement from a harmful "
                         "prompt also counts as Fully Following. Flag the "
@@ -600,7 +600,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Slightly Satisfying.**  \n"
-                        "**Rule (§4.5, Holistic Logic):** *\"If ANY "
+                        "**Rule (§2.1 Satisfaction, Holistic Logic):** *\"If ANY "
                         "dimension/feature is below the highest level, "
                         "Satisfaction CANNOT be Highly Satisfying — at best "
                         "Slightly Satisfying.\"* Style/Tone is one of the "
@@ -628,7 +628,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c.**  \n"
-                        "**Rule (§4.5, Holistic Logic row 1):** *\"If ANY "
+                        "**Rule (§2.1 Satisfaction, Holistic Logic row 1):** *\"If ANY "
                         "dimension is at the lowest level (Not Following, Bad "
                         "Concision, Not Truthful), Satisfaction can only be "
                         "Slightly Unsatisfying or Highly Unsatisfying.\"* "
@@ -665,7 +665,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c — prefer the more faithful response.**  \n"
-                        "**Rule (§5.2 tiebreaker):** *\"TRUTHFULNESS WINS TIES "
+                        "**Rule (§2.2 Preference Ranking tiebreaker):** *\"TRUTHFULNESS WINS TIES "
                         "— when satisfaction levels are similar, prefer the "
                         "more truthful response.\"* Invented detail on a "
                         "source-bound rewrite is a contextual-truthfulness "
@@ -686,7 +686,7 @@ QUIZ: dict = {
                     "correct": "false",
                     "rule": (
                         "**Answer: False.**  \n"
-                        "**Rule (§5.3 Length):** *\"do NOT rank purely on "
+                        "**Rule (§2.2 Preference Ranking Length):** *\"do NOT rank purely on "
                         "length. Prefer the more concise response that **still "
                         "satisfies** the user.\"* A longer response that meets "
                         "the need better should win."
@@ -711,7 +711,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b — Same.**  \n"
-                        "**Rule (§5.1 + §5.2 Principles):** *\"Tied / Same is allowed "
+                        "**Rule (§2.2 Preference Ranking Principles):** *\"Tied / Same is allowed "
                         "when responses are duplicates OR you cannot "
                         "differentiate them on these dimensions.\"* Two "
                         "equally good fun facts are a genuine tie."
@@ -743,7 +743,7 @@ QUIZ: dict = {
                     "correct": "c",
                     "rule": (
                         "**Answer: c.**  \n"
-                        "**Rule (§6.2 Comments):** a good comment names both "
+                        "**Rule (Step 3 Comments):** a good comment names both "
                         "responses, ties each placement to a concrete reason "
                         "(the invented 'storm'), and identifies the deciding "
                         "dimension. (a)/(d) are generic non-comparative "
@@ -769,7 +769,7 @@ QUIZ: dict = {
                     "correct": "b",
                     "rule": (
                         "**Answer: b.**  \n"
-                        "**Rule (§6.1 Comments):** name both responses, compare "
+                        "**Rule (Step 3 Comments):** name both responses, compare "
                         "on a concrete difference (the off-topic anecdote, the "
                         "missing moral), and identify which dimension drives "
                         "the ranking. (a) is generic, (c) restates labels "
@@ -812,7 +812,7 @@ QUIZ: dict = {
                     "correct": "a_much",
                     "rule": (
                         "**Answer: A Much Better.**  \n"
-                        "**Rule (§5.1 Much Better):** *\"One response "
+                        "**Rule (§2.2 Preference Ranking Much Better):** *\"One response "
                         "addresses the request and the other does not.\"* A "
                         "uses the conversation context (hiking, weekend plan); "
                         "B answers a different question (a dictionary "
@@ -838,7 +838,7 @@ QUIZ: dict = {
                     "correct": "b_much",
                     "rule": (
                         "**Answer: B Much Better.**  \n"
-                        "**Rule (§5.2 + §5.3 Time-sensitive):** assume \"now\" and "
+                        "**Rule (§2.2 Preference Ranking Time-sensitive):** assume \"now\" and "
                         "*\"prefer the more currently-accurate response.\"* A "
                         "is outdated (Not Truthful); B is current (Truthful) → "
                         "one addresses the request correctly, the other does "
@@ -866,7 +866,7 @@ QUIZ: dict = {
                     "correct": "a_better",
                     "rule": (
                         "**Answer: A Better.**  \n"
-                        "**Rule (§4.4 Contextual + §5.1):** a source-bound "
+                        "**Rule (§2.1 Truthfulness Contextual + §2.2 Preference Ranking):** a source-bound "
                         "rewrite must not add outside info — B's invented "
                         "details make it Not Truthful contextually. "
                         "Truthfulness on essentials beats nicer formatting → "
@@ -895,7 +895,7 @@ QUIZ: dict = {
                     "correct": "a_slight",
                     "rule": (
                         "**Answer: A Slightly Better.**  \n"
-                        "**Rule (§5.1 Slightly Better):** both address the "
+                        "**Rule (§2.2 Preference Ranking Slightly Better):** both address the "
                         "request and complete both deliverables; A wins only "
                         "on a minor aspect — closer adherence to the requested "
                         "formal tone. A minor stylistic edge = Slightly "
@@ -923,7 +923,7 @@ QUIZ: dict = {
                     "correct": "b_better",
                     "rule": (
                         "**Answer: B Better.**  \n"
-                        "**Rule (§5.1 Better):** when the content is "
+                        "**Rule (§2.2 Preference Ranking Better):** when the content is "
                         "comparable, the deciding factor is instruction "
                         "following. B honors the explicit persona instruction "
                         "(the core of a role-play request); A ignores it → B "

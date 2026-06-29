@@ -47,6 +47,21 @@ from storage import save_quiz_submission, quiz_status_for_email
 UNSELECTED = None  # st.radio uses None as the "nothing picked yet" sentinel.
 
 
+# Official client reference decks (Google Drive). Surfaced in the quiz sidebar
+# and on the landing-page cards so trainers can ground every rule citation in
+# the source PDF. Defined here so app.py can import the same single source.
+REFERENCE_PDFS: list[tuple[str, str]] = [
+    (
+        "Preference Ranking V5 — Guidelines (PDF)",
+        "https://drive.google.com/file/d/1sdjX-CLugmzYDhw43l-U2y4K7c7VuF5j/view?usp=drive_link",
+    ),
+    (
+        "Localization Task (PDF)",
+        "https://drive.google.com/file/d/1vp84lA9ZwrfgRqvC6nT5IpZDVM-KEYqo/view?usp=drive_link",
+    ),
+]
+
+
 # -----------------------------------------------------------------------------
 # Dataset registry
 # -----------------------------------------------------------------------------
@@ -267,6 +282,12 @@ def _render_sidebar(mod: Any) -> None:
             f"{marker} &nbsp; **{block['id']}** &nbsp; {done}/{n}",
             unsafe_allow_html=True,
         )
+
+    st.sidebar.divider()
+    st.sidebar.markdown("**Reference guidelines**")
+    st.sidebar.caption("Every rule cites a section of these client decks.")
+    for label, url in REFERENCE_PDFS:
+        st.sidebar.link_button(label, url, use_container_width=True)
 
     st.sidebar.divider()
     if st.sidebar.button(

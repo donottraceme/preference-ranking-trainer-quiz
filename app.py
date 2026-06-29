@@ -34,7 +34,7 @@ from storage import (
     list_local_quiz_submissions,
     QUIZ_HEADER,
 )
-from quiz import render_quiz, quiz_persistent_keys
+from quiz import render_quiz, quiz_persistent_keys, REFERENCE_PDFS
 
 
 # -----------------------------------------------------------------------------
@@ -1031,6 +1031,19 @@ def render_landing() -> None:
     # lock independently (per-email, per-quiz_id), so finishing one does not
     # block the other.
     st.markdown("### Knowledge quizzes")
+
+    # Official client decks every quiz rule is grounded in — shown inside each
+    # card so trainers can open the source PDF alongside the quiz.
+    ref_links_html = (
+        '<p class="ref-links" style="font-size:13px;margin-top:8px">'
+        '<strong>Reference:</strong> '
+        + " &middot; ".join(
+            f'<a href="{url}" target="_blank" rel="noopener">{label}</a>'
+            for label, url in REFERENCE_PDFS
+        )
+        + "</p>"
+    )
+
     col_q, col_gq = st.columns(2, gap="large")
 
     with col_q:
@@ -1044,6 +1057,7 @@ def render_landing() -> None:
             '<li>One attempt per email (server-enforced)</li>'
             '<li>Inline reveal of correct answer after each click</li>'
             '</ul>'
+            + ref_links_html +
             '</div>',
             unsafe_allow_html=True,
         )
@@ -1070,6 +1084,7 @@ def render_landing() -> None:
             '<li>Separate one-attempt-per-email lock from the Code &amp; Math quiz</li>'
             '<li>Mirrors the real general-purpose certification tasks</li>'
             '</ul>'
+            + ref_links_html +
             '</div>',
             unsafe_allow_html=True,
         )
