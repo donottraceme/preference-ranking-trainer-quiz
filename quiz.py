@@ -415,7 +415,18 @@ def _is_valid_turing_email(email: str) -> bool:
 
 
 def render_quiz(set_name: str | None = None) -> None:
-    """Entry point called from app.py when `?mode=quiz` (optionally `&set=`)."""
+    """Entry point called from app.py when `?mode=quiz` (optionally `&set=`).
+
+    The `?set=` param is read HERE rather than passed in from app.py so the
+    call site stays `render_quiz()` (no args). On Streamlit Cloud a git push
+    can rerun the new app.py against a still-cached old quiz.py; keeping the
+    signature stable avoids a hard `TypeError` during that brief window.
+    """
+    if set_name is None:
+        try:
+            set_name = st.query_params.get("set")
+        except Exception:  # noqa: BLE001
+            set_name = None
     active_set = _resolve_set(set_name)
     mod = _module_for(active_set)
     label = _SET_LABELS.get(active_set, active_set)

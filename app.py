@@ -1190,8 +1190,9 @@ def main() -> None:
     mode = st.query_params.get("mode", "")
     if mode == "quiz":
         # Optional `?set=<code|general>` selects which quiz dataset to serve.
-        # Missing / unknown → the code/math quiz (default).
-        render_quiz(st.query_params.get("set"))
+        # render_quiz() reads the `?set=` param itself, so the call signature
+        # stays arg-free (kept stable to survive Streamlit Cloud hot-reloads).
+        render_quiz()
     elif mode == "exercise":
         # Optional `?task=<task_id>` selects a specific grading task.
         # Missing → first task (Part 2, the canonical PDF example).
